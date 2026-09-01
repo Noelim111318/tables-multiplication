@@ -1,7 +1,7 @@
 // Service worker for the "Tables de Multiplication" PWA.
 // Caches the app shell so the game works fully offline once loaded.
 
-const CACHE_NAME = 'tables-multiplication-v1';
+const CACHE_NAME = 'tables-multiplication-v2026-09-01-2';
 
 // Files that make up the app shell.
 const APP_SHELL = [
@@ -21,6 +21,12 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 // Activate: clean up old caches from previous versions.
 self.addEventListener('activate', event => {
   event.waitUntil(
@@ -31,25 +37,36 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch: cache-first for local files, network fallback for the rest
-// (e.g. the Google Fonts stylesheet). Falls back to the cache offline.
+// Fetch: network-first for HTML navigations to avoid stale pages after a push,
+// while keeping static assets cached for offline use.
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(req).then(cached => {
-      if (cached) return cached;
-      return fetch(req)
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req)
         .then(resp => {
-          // Cache same-origin responses for future offline use.
-          if (resp && resp.status === 200 && new URL(req.url).origin === self.location.origin) {
+          if (resp && resp.ok) {
             const clone = resp.clone();
             caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
           }
           return resp;
         })
-        .catch(() => cached);
-    })
+        .catch(() => caches.match(req).then(cached => cached || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  event.respondWith(
+    fetch(req)
+      .then(resp => {
+        if (resp && resp.status === 200 && new URL(req.url).origin === self.location.origin) {
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
+        }
+        return resp;
+      })
+      .catch(() => caches.match(req))
   );
 });
