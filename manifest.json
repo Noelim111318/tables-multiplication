@@ -1,6 +1,6 @@
 {
   "name": "Tables de Multiplication",
-  "short_name": "Tables x",
+  "short_name": "Multiplications",
   "description": "Entraine-toi aux tables de multiplication avec un rapport d'erreurs et un bilan par table.",
   "lang": "fr",
   "start_url": "./index.html",

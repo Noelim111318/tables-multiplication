@@ -1,7 +1,7 @@
 // Service worker for the "Tables de Multiplication" PWA.
 // Caches the app shell so the game works fully offline once loaded.
 
-const CACHE_NAME = 'tables-multiplication-v2026-09-01-2';
+const CACHE_NAME = 'tables-multiplication-v1.0.0';
 
 // Files that make up the app shell.
 const APP_SHELL = [
@@ -31,7 +31,11 @@ self.addEventListener('message', event => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+      Promise.all(
+        keys
+          .filter(k => k !== CACHE_NAME && k.startsWith('tables-multiplication-'))
+          .map(k => caches.delete(k))
+      )
     )
   );
   self.clients.claim();
