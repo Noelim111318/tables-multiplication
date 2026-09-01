@@ -1,5 +1,5 @@
 (() => {
-  const APP_VERSION = 'v2026.09.01-3';
+  const APP_VERSION = 'v1.0.0';
 
   const starsWrap = document.getElementById('stars');
   for (let i = 0; i < 60; i++) {
@@ -117,6 +117,7 @@
   function showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     document.getElementById(id).classList.add('active');
+    document.body.classList.toggle('results-active', id === 'screen-results');
   }
 
   function startGame(customQueue) {
@@ -218,7 +219,7 @@
       document.getElementById('mascot').textContent = '🎉';
       triggerBurst(true);
       triggerHaptic('success');
-      setTimeout(() => nextQuestion(), 1100);
+      setTimeout(() => nextQuestion(), 850);
     } else {
       scoreWrong++;
       wrongSet.add(key);
@@ -234,7 +235,7 @@
       document.getElementById('mascot').textContent = '😬';
       document.getElementById('question-card').classList.add('shake');
       triggerHaptic('error');
-      setTimeout(() => document.getElementById('question-card').classList.remove('shake'), 400);
+      setTimeout(() => document.getElementById('question-card').classList.remove('shake'), 260);
       const pos = Math.floor(Math.random() * Math.min(4, queue.length + 1)) + 1;
       queue.splice(pos, 0, currentOp);
     }
@@ -247,7 +248,8 @@
     const done = totalOps + wrongSet.size - queue.length;
     const total = totalOps + wrongSet.size;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    document.getElementById('progress-text').textContent = `${done} / ${total}`;
+    const remaining = Math.max(total - done, 0);
+    document.getElementById('progress-text').textContent = `${done} / ${total} • ${remaining} restantes`;
     document.getElementById('progress-fill').style.width = `${pct}%`;
     document.getElementById('score-remaining').textContent = String(queue.length);
   }
@@ -400,6 +402,12 @@
     else navigator.vibrate(10);
   }
 
+  function updateViewportScale() {
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    const scale = Math.min(1, Math.max(0.75, vh / 820));
+    document.documentElement.style.setProperty('--app-scale', scale.toFixed(3));
+  }
+
   function lockAnswerInput() {
     const input = document.getElementById('answer-input');
     input.readOnly = true;
@@ -502,6 +510,8 @@
 
   initTables();
   lockAnswerInput();
+  updateViewportScale();
+  window.addEventListener('resize', updateViewportScale);
 
   document.querySelectorAll('.numpad-btn').forEach(button => {
     button.addEventListener('click', () => numpadPress(button.dataset.key));
@@ -510,6 +520,7 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', async () => {
       try {
+        const reloadKey = `sw-reload:${APP_VERSION}`;
         const registration = await navigator.serviceWorker.register(`service-worker.js?v=${APP_VERSION}`);
         if (registration.waiting) {
           registration.waiting.postMessage({ type: 'SKIP_WAITING' });
@@ -520,7 +531,10 @@
           newWorker.addEventListener('statechange', () => {
             if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
               newWorker.postMessage({ type: 'SKIP_WAITING' });
-              window.location.reload();
+              if (!sessionStorage.getItem(reloadKey)) {
+                sessionStorage.setItem(reloadKey, '1');
+                window.location.reload();
+              }
             }
           });
         });
