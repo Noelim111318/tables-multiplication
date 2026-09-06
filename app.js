@@ -1,5 +1,5 @@
 (() => {
-  const APP_VERSION = 'v1.0.0';
+  const APP_VERSION = 'v1.1.0';
 
   const starsWrap = document.getElementById('stars');
   for (let i = 0; i < 60; i++) {
@@ -32,8 +32,13 @@
 
   const SLOW_MS = 5000;
   const HISTORY_KEY = 'tm_error_history_v1';
+  const PREFS_KEY = 'tm_prefs_v1';
+  const STREAK_KEY = 'tm_streak_v1';
+  const DAILY_KEY = 'tm_daily_v1';
   const mascots = ['🦊', '🐸', '🦁', '🐼', '🦄', '🐯', '🐧', '🦋'];
   let mascotIdx = 0;
+  let soundOn = true;
+  let refreshInstall = function () {};
 
   function loadHistory() {
     try {
@@ -59,7 +64,134 @@
     saveHistory(hist);
   }
 
+  function loadJSON(key, fallback) {
+    try {
+      const v = JSON.parse(localStorage.getItem(key));
+      return (v && typeof v === 'object') ? v : fallback;
+    } catch (e) { return fallback; }
+  }
+  function saveJSON(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
+  }
+
+  function loadPrefs() { return loadJSON(PREFS_KEY, {}); }
+  function savePrefs() {
+    saveJSON(PREFS_KEY, { tables: selectedTables.slice(), sound: soundOn });
+  }
+
+  /* ------------------------------------------------------------- Petits sons */
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!soundOn) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtx) audioCtx = new AC();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) { audioCtx = null; }
+  }
+  function tone(freq, startAt, dur, type, peak) {
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime + startAt;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak || 0.2, t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.03);
+  }
+  function playFeedbackSound(ok) {
+    if (!soundOn) return;
+    ensureAudio();
+    if (ok) { tone(660, 0, 0.12, 'sine', 0.22); tone(988, 0.1, 0.16, 'sine', 0.2); }
+    else { tone(311, 0, 0.16, 'square', 0.12); tone(233, 0.12, 0.22, 'square', 0.12); }
+  }
+
+  /* ------------------------------------------- Série de jours + historique 7 j */
+  function dayStr(ms) {
+    const d = new Date(ms);
+    return d.getFullYear() + '-'
+      + String(d.getMonth() + 1).padStart(2, '0') + '-'
+      + String(d.getDate()).padStart(2, '0');
+  }
+  function bumpStreak() {
+    const today = dayStr(Date.now());
+    const yest = dayStr(Date.now() - 864e5);
+    const s = loadJSON(STREAK_KEY, { count: 0, lastDay: '' });
+    if (s.lastDay === today) return;
+    s.count = (s.lastDay === yest) ? (s.count + 1) : 1;
+    s.lastDay = today;
+    saveJSON(STREAK_KEY, s);
+  }
+  function renderStreak() {
+    const el = document.getElementById('streak-badge');
+    if (!el) return;
+    const s = loadJSON(STREAK_KEY, { count: 0, lastDay: '' });
+    const today = dayStr(Date.now());
+    const yest = dayStr(Date.now() - 864e5);
+    const alive = s.count > 0 && (s.lastDay === today || s.lastDay === yest);
+    el.hidden = !alive;
+    if (alive) el.textContent = `🔥 ${s.count} jour${s.count > 1 ? 's' : ''} d'affilée`;
+  }
+  function logDaily(seen, correct) {
+    if (!seen) return;
+    const log = loadJSON(DAILY_KEY, {});
+    const k = dayStr(Date.now());
+    const e = log[k] || { seen: 0, correct: 0 };
+    e.seen += seen;
+    e.correct += correct;
+    log[k] = e;
+    const cutoff = dayStr(Date.now() - 60 * 864e5);
+    Object.keys(log).forEach(d => { if (d < cutoff) delete log[d]; });
+    saveJSON(DAILY_KEY, log);
+  }
+  function renderWeek() {
+    const wrap = document.getElementById('week-bars');
+    const block = document.getElementById('history-week');
+    const sum = document.getElementById('week-summary');
+    if (!wrap || !block) return;
+    const log = loadJSON(DAILY_KEY, {});
+    const labels = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+    wrap.innerHTML = '';
+    let tSeen = 0, tCorrect = 0, days = 0;
+    for (let i = 6; i >= 0; i--) {
+      const ms = Date.now() - i * 864e5;
+      const e = log[dayStr(ms)];
+      const has = !!(e && e.seen);
+      const pct = has ? Math.round((e.correct / e.seen) * 100) : 0;
+      if (has) { tSeen += e.seen; tCorrect += e.correct; days += 1; }
+      const col = document.createElement('div');
+      col.className = 'week-col';
+      const bar = document.createElement('div');
+      bar.className = 'week-bar';
+      bar.style.height = has ? `${Math.max(8, pct)}%` : '3px';
+      if (has) bar.style.background = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      bar.title = has ? `${e.correct}/${e.seen} — ${pct}%` : 'pas joué';
+      const lab = document.createElement('span');
+      lab.className = 'week-lab';
+      lab.textContent = labels[new Date(ms).getDay()];
+      col.append(bar, lab);
+      wrap.appendChild(col);
+    }
+    if (tSeen === 0) { block.hidden = true; return; }
+    block.hidden = false;
+    const rate = Math.round((tCorrect / tSeen) * 100);
+    sum.textContent = `${tSeen} questions sur ${days} jour${days > 1 ? 's' : ''} — ${rate}% de réussite`;
+  }
+
   function initTables() {
+    const prefs = loadPrefs();
+    if (Array.isArray(prefs.tables)) {
+      const saved = prefs.tables
+        .map(Number)
+        .filter(n => Number.isInteger(n) && n >= 1 && n <= 10);
+      if (saved.length) selectedTables = [...new Set(saved)];
+    }
+    if (typeof prefs.sound === 'boolean') soundOn = prefs.sound;
+
     const grid = document.getElementById('tables-grid');
     for (let i = 1; i <= 10; i++) {
       const btn = document.createElement('button');
@@ -80,12 +212,14 @@
       selectedTables.push(n);
       btn.classList.add('active');
     }
+    savePrefs();
     setTimeout(() => btn.blur(), 0);
   }
 
   function selectAll() {
     selectedTables = Array.from({ length: 10 }, (_, i) => i + 1);
     document.querySelectorAll('.table-btn').forEach(b => b.classList.add('active'));
+    savePrefs();
   }
 
   function deselectAll() {
@@ -93,6 +227,7 @@
     document.querySelectorAll('.table-btn').forEach(b => {
       b.classList.toggle('active', Number(b.dataset.table) === selectedTables[0]);
     });
+    savePrefs();
   }
 
   function buildQueue() {
@@ -118,6 +253,10 @@
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     document.getElementById(id).classList.add('active');
     document.body.classList.toggle('results-active', id === 'screen-results');
+    document.body.classList.toggle('settings-active', id === 'screen-settings');
+    document.body.classList.toggle('game-active', id === 'screen-game');
+    window.scrollTo(0, 0);
+    refreshInstall();
   }
 
   function startGame(customQueue) {
@@ -132,6 +271,10 @@
     scoreWrong = 0;
     totalOps = queue.length;
     mascotIdx = 0;
+    savePrefs();
+    bumpStreak();
+    renderStreak();
+    ensureAudio();
     updateScoreDisplay();
     showScreen('screen-game');
     nextQuestion();
@@ -159,6 +302,7 @@
     }
     answered = false;
     currentOp = queue.shift();
+    window.scrollTo(0, 0);   // chaque question repart en haut de l'écran
 
     const input = document.getElementById('answer-input');
     input.value = '';
@@ -204,6 +348,8 @@
 
     if (!tableStats[table]) tableStats[table] = { asked: 0, correct: 0 };
     tableStats[table].asked++;
+
+    playFeedbackSound(userAnswer === correctAnswer);
 
     if (userAnswer === correctAnswer) {
       scoreCorrect++;
@@ -279,6 +425,8 @@
     document.getElementById('result-subtitle').textContent = sub;
 
     persistSessionErrors();
+    logDaily(total, scoreCorrect);
+    renderWeek();
     renderTableSummary();
     renderErrorReport();
 
@@ -508,8 +656,110 @@
     printBtn.addEventListener('click', () => window.print());
   }
 
+  // initTables() charge les préférences (tables cochées + son), donc avant le
+  // câblage de la case "son" pour que la case reflète le choix mémorisé.
   initTables();
   lockAnswerInput();
+
+  const soundToggle = document.getElementById('sound-toggle');
+  if (soundToggle) {
+    soundToggle.checked = soundOn;
+    soundToggle.addEventListener('change', () => {
+      soundOn = soundToggle.checked;
+      if (soundOn) ensureAudio();
+      savePrefs();
+    });
+  }
+
+  const resetBtn = document.getElementById('reset-progress');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      const ok = window.confirm(
+        'Effacer toute la progression ?\n'
+        + '(historique des erreurs et série de jours)');
+      if (!ok) return;
+      [HISTORY_KEY, STREAK_KEY, DAILY_KEY].forEach(k => {
+        try { localStorage.removeItem(k); } catch (e) { /* ignore */ }
+      });
+      location.reload();
+    });
+  }
+
+  /* ----------------------------------- Bandeau "Installer l'appli" (en haut) */
+  (function setupInstall() {
+    const row = document.getElementById('install-row');
+    const btn = document.getElementById('install-btn');
+    const dismiss = document.getElementById('install-dismiss');
+    const hint = document.getElementById('install-hint');
+    if (!row || !btn) return;
+
+    const HIDE_KEY = 'tm_install_hidden';
+    let deferred = null;
+    let mode = null;               // null | 'prompt' | 'ios'
+    let hiddenByUser = false;
+    try { hiddenByUser = localStorage.getItem(HIDE_KEY) === '1'; } catch (e) { /* ignore */ }
+
+    function isStandalone() {
+      return window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true
+        || document.referrer.indexOf('android-app://') === 0;
+    }
+    const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const iOSSafari = iOS && /safari/i.test(navigator.userAgent)
+      && !/crios|fxios|edgios|opios|android/i.test(navigator.userAgent);
+
+    // affiché seulement sur l'écran d'accueil, et seulement si l'appli est installable
+    refreshInstall = function () {
+      const onHome = document.getElementById('screen-settings').classList.contains('active');
+      const show = !!mode && !hiddenByUser && !isStandalone() && onHome;
+      row.hidden = !show;
+      if (!show) hint.hidden = true;
+      if (show) row.dataset.mode = mode;
+    };
+    function forget() {
+      hiddenByUser = true;
+      try { localStorage.setItem(HIDE_KEY, '1'); } catch (e) { /* ignore */ }
+      refreshInstall();
+    }
+
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      deferred = e;
+      mode = 'prompt';
+      refreshInstall();
+    });
+    window.addEventListener('appinstalled', () => {
+      deferred = null;
+      mode = null;
+      forget();
+    });
+
+    btn.addEventListener('click', async () => {
+      if (mode === 'ios') {
+        hint.hidden = !hint.hidden;
+        hint.textContent = "Sur iPhone/iPad : touche « Partager » (le carré avec une flèche vers le haut), "
+          + "puis « Sur l'écran d'accueil ».";
+        return;
+      }
+      if (!deferred) return;
+      btn.disabled = true;
+      deferred.prompt();
+      try { await deferred.userChoice; } catch (e) { /* ignore */ }
+      deferred = null;
+      mode = null;
+      btn.disabled = false;
+      refreshInstall();
+    });
+    if (dismiss) dismiss.addEventListener('click', forget);
+
+    // iOS Safari ne déclenche jamais beforeinstallprompt : on propose la marche à suivre.
+    if (iOSSafari) mode = 'ios';
+    refreshInstall();
+  })();
+
+  renderStreak();
+  showScreen('screen-settings');
   updateViewportScale();
   window.addEventListener('resize', updateViewportScale);
 
