@@ -1,16 +1,22 @@
 // Service worker for the "Tables de Multiplication" PWA.
 // Caches the app shell so the game works fully offline once loaded.
 
-const CACHE_NAME = 'tables-multiplication-v1.0.0';
+const CACHE_NAME = 'tables-multiplication-v1.1.0';
 
 // Files that make up the app shell.
 const APP_SHELL = [
   './',
   './index.html',
+  './app.css',
+  './app.js',
   './manifest.json',
+  './fonts/nunito-latin.woff2',
+  './fonts/nunito-latin-ext.woff2',
+  './favicon.ico',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './icons/icon-512-maskable.png'
+  './icons/icon-512-maskable.png',
+  './icons/apple-touch-icon.png'
 ];
 
 // Install: pre-cache the app shell.
