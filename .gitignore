@@ -1,0 +1,13 @@
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# Fichiers temporaires
+*.tmp
+
+# Python (tools/make-icon.py)
+__pycache__/
+*.pyc
