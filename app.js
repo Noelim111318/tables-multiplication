@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = 'v1.3.0';
+  const APP_VERSION = 'v1.4.0';
   const APP_ID = 'tables-multiplication';
   const E = window.AppEngine;
   const D = window.APP_DATA;
@@ -99,6 +99,7 @@
   let mascotIdx = 0;
   let committed = true;         // la partie en cours a-t-elle déjà été enregistrée ?
   let timedOn = false;          // option « Contre la montre » (préférence)
+  let holesOn = false;          // option « Calcul à trous » (préférence)
   let gameTimed = false;        // la partie en cours est-elle chronométrée ?
   let recordKey = null;         // clé du record de cette partie (null : pas de record, ex. révision)
   let lastRecordKey = null;     // idem, pour « Recommencer »
@@ -106,6 +107,9 @@
   // Le séparateur reste « × » : c'est le format des historiques déjà enregistrés.
   const keyOf = (a, b) => `${a}×${b}`;
   const parseKey = (k) => k.split('×').map(Number);
+  // Calcul à trous : la question cache le résultat ('r'), le 1er nombre ('a') ou le 2e ('b').
+  const SHAPES = ['r', 'a', 'b'];
+  const pickShape = () => SHAPES[Math.floor(Math.random() * SHAPES.length)];
   const range = (min, max) => Array.from({ length: max - min + 1 }, (_, i) => min + i);
   const allTables = range(D.tables.min, D.tables.max);
 
@@ -127,10 +131,11 @@
     selected = saved.length ? [...new Set(saved)] : D.tables.defaults.slice();
     soundOn = typeof p.sound === 'boolean' ? p.sound : true;
     timedOn = p.timed === true;
+    holesOn = p.holes === true;
     if (!soundOn) E.sound.enable(false);   // enable(true) créerait l'AudioContext avant tout geste
   }
   function savePrefs() {
-    E.store.save('prefs', { tables: selected.slice(), sound: soundOn, timed: timedOn });
+    E.store.save('prefs', { tables: selected.slice(), sound: soundOn, timed: timedOn, holes: holesOn });
   }
 
   function loadErrorHistory() {
@@ -201,6 +206,14 @@
     });
   }
 
+  const holesToggle = $('#holes-toggle');
+  if (holesToggle) {
+    holesToggle.addEventListener('change', () => {
+      holesOn = holesToggle.checked;
+      savePrefs();
+    });
+  }
+
   $('#reset-progress').addEventListener('click', () => {
     const ok = window.confirm(
       'Effacer toute la progression ?\n(historique des erreurs, série de jours et records)');
@@ -227,10 +240,12 @@
 
   // recordKeyArg : non fourni = partie normale (record par ensemble de tables) ; null = pas de record (révision).
   function startGame(ops, recordKeyArg) {
-    const list = ops && ops.length ? ops : buildOps();
-    if (!list.length) return;
+    const base = ops && ops.length ? ops : buildOps();
+    if (!base.length) return;
+    // Chaque question cache au hasard le résultat, le 1er ou le 2e nombre (si l'option est cochée).
+    const list = base.map((o) => [o[0], o[1], holesOn ? pickShape() : 'r']);
     clearTimeout(advanceTimer);
-    recordKey = recordKeyArg !== undefined ? recordKeyArg : (ops && ops.length ? null : tablesKey());
+    recordKey = recordKeyArg !== undefined ? recordKeyArg : (ops && ops.length ? null : tablesKey() + (holesOn ? '|trous' : ''));
     lastRecordKey = recordKey;
     gameTimed = timedOn;
     lastOps = list.map((o) => o.slice());
@@ -273,10 +288,12 @@
 
     const q = $('#question-text');
     q.textContent = '';
-    q.append(`${current[0]} `);
-    q.append(span('op-symbol', '×'));
-    q.append(` ${current[1]} `);
-    q.append(span('equals', '='));
+    const shape = current[2] || 'r';
+    q.append(shape === 'a' ? span('hole', '?') : String(current[0]));
+    q.append(' ', span('op-symbol', '×'), ' ');
+    q.append(shape === 'b' ? span('hole', '?') : String(current[1]));
+    q.append(' ', span('equals', '='));
+    if (shape !== 'r') q.append(' ', String(current[0] * current[1]));
 
     mascotEl.textContent = D.mascots[mascotIdx % D.mascots.length];
     mascotIdx++;
@@ -293,8 +310,9 @@
   function checkAnswer() {
     if (answered || answerStr === '' || !current) return;
 
-    const [a, b] = current;
-    const expected = a * b;
+    const [a, b, shape] = current;
+    const product = a * b;
+    const expected = shape === 'a' ? a : shape === 'b' ? b : product;   // le nombre à trouver
     const ok = parseInt(answerStr, 10) === expected;
     const key = keyOf(a, b);
     const elapsed = Date.now() - startedAt;
@@ -313,7 +331,7 @@
       const slow = elapsed > D.slowMs;
       if (slow) slowSet.add(key); else slowSet.delete(key);
       answerEl.classList.add('correct-input');
-      feedbackEl.textContent = `✅ Bravo ! ${a} × ${b} = ${expected}${slow ? ' (un peu lent 🐢)' : ''}`;
+      feedbackEl.textContent = `✅ Bravo ! ${a} × ${b} = ${product}${slow ? ' (un peu lent 🐢)' : ''}`;
       feedbackEl.className = 'feedback correct';
       mascotEl.textContent = '🎉';
       E.fx.burst(true);
@@ -327,6 +345,7 @@
       strong.textContent = String(expected);
       feedbackEl.textContent = '❌ Pas tout à fait… La réponse était ';
       feedbackEl.appendChild(strong);
+      if (shape !== 'r') feedbackEl.append(` (${a} × ${b} = ${product})`);
       feedbackEl.className = 'feedback wrong';
       mascotEl.textContent = '😬';
       cardEl.classList.add('shake');
@@ -628,6 +647,7 @@
   loadPrefs();
   soundToggle.checked = soundOn;
   if (timedToggle) timedToggle.checked = timedOn;
+  if (holesToggle) holesToggle.checked = holesOn;
   renderTableButtons();
   startBtn.addEventListener('click', () => startGame());
   E.screens.show('screen-home', { focus: false });

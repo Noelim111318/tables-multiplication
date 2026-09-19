@@ -131,6 +131,11 @@
 }
 .question-text .op-symbol { color: var(--yellow); }
 .question-text .equals { color: var(--ink-dim); }
+.question-text .hole {
+  display: inline-block; min-width: 1.1em; padding: 0 0.1em; border-radius: 12px;
+  color: var(--yellow); background: color-mix(in srgb, var(--yellow) 14%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--yellow) 60%, transparent);
+}
 
 .answer-wrap { display: flex; align-items: stretch; gap: 10px; width: 100%; min-width: 0; }
 .answer-input {
