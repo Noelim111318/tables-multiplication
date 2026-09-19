@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = 'v1.4.0';
+  const APP_VERSION = 'v1.4.1';
   const APP_ID = 'tables-multiplication';
   const E = window.AppEngine;
   const D = window.APP_DATA;
@@ -100,6 +100,7 @@
   let committed = true;         // la partie en cours a-t-elle déjà été enregistrée ?
   let timedOn = false;          // option « Contre la montre » (préférence)
   let holesOn = false;          // option « Calcul à trous » (préférence)
+  let gameHoles = false;        // la partie en cours est-elle en calcul à trous ?
   let gameTimed = false;        // la partie en cours est-elle chronométrée ?
   let recordKey = null;         // clé du record de cette partie (null : pas de record, ex. révision)
   let lastRecordKey = null;     // idem, pour « Recommencer »
@@ -109,7 +110,11 @@
   const parseKey = (k) => k.split('×').map(Number);
   // Calcul à trous : la question cache le résultat ('r'), le 1er nombre ('a') ou le 2e ('b').
   const SHAPES = ['r', 'a', 'b'];
-  const pickShape = () => SHAPES[Math.floor(Math.random() * SHAPES.length)];
+  // Avec une seule table dans la partie, cacher le 1er nombre (la table) n'aurait pas de sens : on la connaît.
+  const pickShape = (allowFirst) => {
+    const shapes = allowFirst ? SHAPES : ['r', 'b'];
+    return shapes[Math.floor(Math.random() * shapes.length)];
+  };
   const range = (min, max) => Array.from({ length: max - min + 1 }, (_, i) => min + i);
   const allTables = range(D.tables.min, D.tables.max);
 
@@ -243,7 +248,9 @@
     const base = ops && ops.length ? ops : buildOps();
     if (!base.length) return;
     // Chaque question cache au hasard le résultat, le 1er ou le 2e nombre (si l'option est cochée).
-    const list = base.map((o) => [o[0], o[1], holesOn ? pickShape() : 'r']);
+    const manyTables = new Set(base.map((o) => o[0])).size > 1;
+    gameHoles = holesOn;
+    const list = base.map((o) => [o[0], o[1], holesOn ? pickShape(manyTables) : 'r']);
     clearTimeout(advanceTimer);
     recordKey = recordKeyArg !== undefined ? recordKeyArg : (ops && ops.length ? null : tablesKey() + (holesOn ? '|trous' : ''));
     lastRecordKey = recordKey;
@@ -294,6 +301,7 @@
     q.append(shape === 'b' ? span('hole', '?') : String(current[1]));
     q.append(' ', span('equals', '='));
     if (shape !== 'r') q.append(' ', String(current[0] * current[1]));
+    else if (gameHoles) q.append(' ', span('hole', '?'));   // forme classique : le « ? » est affiché aussi
 
     mascotEl.textContent = D.mascots[mascotIdx % D.mascots.length];
     mascotIdx++;

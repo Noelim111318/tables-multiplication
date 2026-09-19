@@ -32,7 +32,9 @@ tables d'addition.
   et on garde le **meilleur temps** pour chaque ensemble de tables. Le bilan affiche le temps et
   le record (« Nouveau record ! »). Pas de record pour une partie de révision.
 - **🕳️ Calcul à trous** (option) : chaque question cache au hasard le résultat, le premier ou le
-  deuxième nombre (`? × 7 = 63`), et il faut trouver le nombre manquant. Après une erreur, la
+  deuxième nombre (`? × 7 = 63`, `… = ?`), et il faut trouver le nombre manquant. Le « ? » est
+  affiché dans toutes les formes. Avec une seule table dans la partie, le premier nombre (la
+  table) n'est jamais caché : on la connaît. Après une erreur, la
   réponse s'affiche avec l'opération complète. Le record du mode « contre la montre » est séparé.
 - **Barre de progression** + score en direct (✅ succès / ❌ erreurs / 🔵 restantes).
 - **Écran de bilan** :
