@@ -1,247 +1,93 @@
-(() => {
-  const APP_VERSION = 'v1.1.0';
+/* Tables de Multiplication — logique de l'app.
+ *
+ * La coque PWA (service worker, bandeau installer, stockage, sons, série de
+ * jours…) vient d'AppEngine (engine/engine.js). Ici : le jeu et le bilan.
+ */
+(function () {
+  'use strict';
 
-  const starsWrap = document.getElementById('stars');
-  for (let i = 0; i < 60; i++) {
-    const s = document.createElement('div');
-    s.className = 'star';
-    const sz = Math.random() * 2.5 + 0.5;
-    s.style.width = `${sz}px`;
-    s.style.height = `${sz}px`;
-    s.style.top = `${Math.random() * 100}%`;
-    s.style.left = `${Math.random() * 100}%`;
-    s.style.setProperty('--d', `${(Math.random() * 3 + 2).toFixed(1)}s`);
-    s.style.setProperty('--delay', `${(Math.random() * 4).toFixed(1)}s`);
-    s.style.setProperty('--op', `${(Math.random() * 0.6 + 0.2).toFixed(2)}`);
-    starsWrap.appendChild(s);
-  }
+  const APP_VERSION = 'v1.2.0';
+  const APP_ID = 'tables-multiplication';
+  const E = window.AppEngine;
+  const D = window.APP_DATA;
+  const $ = E.$;
 
-  let selectedTables = [2, 3, 4, 5];
-  let queue = [];
-  let wrongSet = new Set();
-  let errorCounts = {};
-  let slowSet = new Set();
-  let opTimes = {};
-  let tableStats = {};
-  let scoreCorrect = 0;
-  let scoreWrong = 0;
-  let totalOps = 0;
-  let currentOp = null;
-  let answered = false;
-  let questionStart = 0;
+  /* ----------------------------------------- Reprise des anciennes données */
+  // Avant le moteur, les clés étaient `tm_*` (sans préfixe). On les recopie une
+  // fois vers le stockage du moteur, AVANT boot() : le badge de série et le
+  // bandeau d'installation lisent le stockage dès le démarrage.
+  const LEGACY_KEYS = {
+    tm_prefs_v1: 'prefs',
+    tm_error_history_v1: 'errors',
+    tm_streak_v1: 'streak',
+    tm_daily_v1: 'daily',
+    tm_install_hidden: 'install-hidden',
+  };
+  E.store.ns(APP_ID);
+  E.store.migrate({
+    1: function () {
+      Object.keys(LEGACY_KEYS).forEach((oldKey) => {
+        const name = LEGACY_KEYS[oldKey];
+        let raw = null;
+        try { raw = localStorage.getItem(oldKey); } catch (e) { return; }
+        if (raw === null) return;
+        let done;
+        try {
+          if (!E.store.keys().includes(name)) {
+            E.store.save(name, name === 'install-hidden' ? true : JSON.parse(raw));
+          }
+          done = E.store.keys().includes(name);   // save() avale les erreurs de quota
+        } catch (e) {
+          done = true;                            // valeur illisible : rien à sauver
+        }
+        if (done) {
+          try { localStorage.removeItem(oldKey); } catch (e) { /* ignore */ }
+        }
+      });
+    },
+  });
 
-  const SLOW_MS = 5000;
-  const HISTORY_KEY = 'tm_error_history_v1';
-  const PREFS_KEY = 'tm_prefs_v1';
-  const STREAK_KEY = 'tm_streak_v1';
-  const DAILY_KEY = 'tm_daily_v1';
-  const mascots = ['🦊', '🐸', '🦁', '🐼', '🦄', '🐯', '🐧', '🦋'];
-  let mascotIdx = 0;
+  E.boot({
+    id: APP_ID,
+    version: APP_VERSION,
+    autoReload: false,      // voir « Mises à jour » plus bas : jamais en pleine partie
+    strings: {
+      weekNotPlayed: 'pas joué',
+      weekSummary: (seen, days, rate) =>
+        `${seen} questions sur ${days} jour${days > 1 ? 's' : ''} — ${rate}% de réussite`,
+      streak: (n) => `🔥 ${n} jour${n > 1 ? 's' : ''} d'affilée`,
+    },
+  });
+
+  /* ------------------------------------------------------------------ État */
+  let selected = [];            // tables cochées
   let soundOn = true;
-  let refreshInstall = function () {};
 
-  function loadHistory() {
-    try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY)) || {};
-    } catch (e) {
-      return {};
-    }
-  }
+  let queue = [];               // questions restantes (la courante est sortie)
+  let lastOps = [];             // questions de la dernière partie (pour « Recommencer »)
+  let errorCounts = {};         // erreurs de la partie : clé -> nombre
+  let slowSet = new Set();      // bonnes réponses trop lentes
+  let opTimes = {};             // meilleur temps de bonne réponse : clé -> ms
+  let tableStats = {};          // table -> { asked, correct }
+  let correctCount = 0;
+  let wrongCount = 0;
+  let totalOps = 0;
+  let current = null;           // [a, b]
+  let answered = false;
+  let answerStr = '';
+  let startedAt = 0;
+  let advanceTimer = null;
+  let mascotIdx = 0;
+  let committed = true;         // la partie en cours a-t-elle déjà été enregistrée ?
 
-  function saveHistory(hist) {
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(hist));
-    } catch (e) {
-      // ignore storage errors
-    }
-  }
-
-  function persistSessionErrors() {
-    const hist = loadHistory();
-    for (const [key, count] of Object.entries(errorCounts)) {
-      hist[key] = (hist[key] || 0) + count;
-    }
-    saveHistory(hist);
-  }
-
-  function loadJSON(key, fallback) {
-    try {
-      const v = JSON.parse(localStorage.getItem(key));
-      return (v && typeof v === 'object') ? v : fallback;
-    } catch (e) { return fallback; }
-  }
-  function saveJSON(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
-  }
-
-  function loadPrefs() { return loadJSON(PREFS_KEY, {}); }
-  function savePrefs() {
-    saveJSON(PREFS_KEY, { tables: selectedTables.slice(), sound: soundOn });
-  }
-
-  /* ------------------------------------------------------------- Petits sons */
-  let audioCtx = null;
-  function ensureAudio() {
-    if (!soundOn) return;
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      if (!audioCtx) audioCtx = new AC();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-    } catch (e) { audioCtx = null; }
-  }
-  function tone(freq, startAt, dur, type, peak) {
-    if (!audioCtx) return;
-    const t0 = audioCtx.currentTime + startAt;
-    const osc = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    osc.type = type || 'sine';
-    osc.frequency.setValueAtTime(freq, t0);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(peak || 0.2, t0 + 0.015);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(g); g.connect(audioCtx.destination);
-    osc.start(t0); osc.stop(t0 + dur + 0.03);
-  }
-  function playFeedbackSound(ok) {
-    if (!soundOn) return;
-    ensureAudio();
-    if (ok) { tone(660, 0, 0.12, 'sine', 0.22); tone(988, 0.1, 0.16, 'sine', 0.2); }
-    else { tone(311, 0, 0.16, 'square', 0.12); tone(233, 0.12, 0.22, 'square', 0.12); }
-  }
-
-  /* ------------------------------------------- Série de jours + historique 7 j */
-  function dayStr(ms) {
-    const d = new Date(ms);
-    return d.getFullYear() + '-'
-      + String(d.getMonth() + 1).padStart(2, '0') + '-'
-      + String(d.getDate()).padStart(2, '0');
-  }
-  function bumpStreak() {
-    const today = dayStr(Date.now());
-    const yest = dayStr(Date.now() - 864e5);
-    const s = loadJSON(STREAK_KEY, { count: 0, lastDay: '' });
-    if (s.lastDay === today) return;
-    s.count = (s.lastDay === yest) ? (s.count + 1) : 1;
-    s.lastDay = today;
-    saveJSON(STREAK_KEY, s);
-  }
-  function renderStreak() {
-    const el = document.getElementById('streak-badge');
-    if (!el) return;
-    const s = loadJSON(STREAK_KEY, { count: 0, lastDay: '' });
-    const today = dayStr(Date.now());
-    const yest = dayStr(Date.now() - 864e5);
-    const alive = s.count > 0 && (s.lastDay === today || s.lastDay === yest);
-    el.hidden = !alive;
-    if (alive) el.textContent = `🔥 ${s.count} jour${s.count > 1 ? 's' : ''} d'affilée`;
-  }
-  function logDaily(seen, correct) {
-    if (!seen) return;
-    const log = loadJSON(DAILY_KEY, {});
-    const k = dayStr(Date.now());
-    const e = log[k] || { seen: 0, correct: 0 };
-    e.seen += seen;
-    e.correct += correct;
-    log[k] = e;
-    const cutoff = dayStr(Date.now() - 60 * 864e5);
-    Object.keys(log).forEach(d => { if (d < cutoff) delete log[d]; });
-    saveJSON(DAILY_KEY, log);
-  }
-  function renderWeek() {
-    const wrap = document.getElementById('week-bars');
-    const block = document.getElementById('history-week');
-    const sum = document.getElementById('week-summary');
-    if (!wrap || !block) return;
-    const log = loadJSON(DAILY_KEY, {});
-    const labels = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-    wrap.innerHTML = '';
-    let tSeen = 0, tCorrect = 0, days = 0;
-    for (let i = 6; i >= 0; i--) {
-      const ms = Date.now() - i * 864e5;
-      const e = log[dayStr(ms)];
-      const has = !!(e && e.seen);
-      const pct = has ? Math.round((e.correct / e.seen) * 100) : 0;
-      if (has) { tSeen += e.seen; tCorrect += e.correct; days += 1; }
-      const col = document.createElement('div');
-      col.className = 'week-col';
-      const bar = document.createElement('div');
-      bar.className = 'week-bar';
-      bar.style.height = has ? `${Math.max(8, pct)}%` : '3px';
-      if (has) bar.style.background = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
-      bar.title = has ? `${e.correct}/${e.seen} — ${pct}%` : 'pas joué';
-      const lab = document.createElement('span');
-      lab.className = 'week-lab';
-      lab.textContent = labels[new Date(ms).getDay()];
-      col.append(bar, lab);
-      wrap.appendChild(col);
-    }
-    if (tSeen === 0) { block.hidden = true; return; }
-    block.hidden = false;
-    const rate = Math.round((tCorrect / tSeen) * 100);
-    sum.textContent = `${tSeen} questions sur ${days} jour${days > 1 ? 's' : ''} — ${rate}% de réussite`;
-  }
-
-  function initTables() {
-    const prefs = loadPrefs();
-    if (Array.isArray(prefs.tables)) {
-      const saved = prefs.tables
-        .map(Number)
-        .filter(n => Number.isInteger(n) && n >= 1 && n <= 10);
-      if (saved.length) selectedTables = [...new Set(saved)];
-    }
-    if (typeof prefs.sound === 'boolean') soundOn = prefs.sound;
-
-    const grid = document.getElementById('tables-grid');
-    for (let i = 1; i <= 10; i++) {
-      const btn = document.createElement('button');
-      btn.className = 'table-btn' + (selectedTables.includes(i) ? ' active' : '');
-      btn.textContent = i;
-      btn.dataset.table = String(i);
-      btn.addEventListener('click', () => toggleTable(i, btn));
-      grid.appendChild(btn);
-    }
-  }
-
-  function toggleTable(n, btn) {
-    if (selectedTables.includes(n)) {
-      if (selectedTables.length === 1) return;
-      selectedTables = selectedTables.filter(x => x !== n);
-      btn.classList.remove('active');
-    } else {
-      selectedTables.push(n);
-      btn.classList.add('active');
-    }
-    savePrefs();
-    setTimeout(() => btn.blur(), 0);
-  }
-
-  function selectAll() {
-    selectedTables = Array.from({ length: 10 }, (_, i) => i + 1);
-    document.querySelectorAll('.table-btn').forEach(b => b.classList.add('active'));
-    savePrefs();
-  }
-
-  function deselectAll() {
-    selectedTables = [selectedTables[0] || 2];
-    document.querySelectorAll('.table-btn').forEach(b => {
-      b.classList.toggle('active', Number(b.dataset.table) === selectedTables[0]);
-    });
-    savePrefs();
-  }
-
-  function buildQueue() {
-    const ops = [];
-    for (const t of selectedTables) {
-      for (let i = 1; i <= 10; i++) {
-        ops.push([t, i]);
-      }
-    }
-    return shuffle(ops);
-  }
+  // Le séparateur reste « × » : c'est le format des historiques déjà enregistrés.
+  const keyOf = (a, b) => `${a}×${b}`;
+  const parseKey = (k) => k.split('×').map(Number);
+  const range = (min, max) => Array.from({ length: max - min + 1 }, (_, i) => min + i);
+  const allTables = range(D.tables.min, D.tables.max);
 
   function shuffle(arr) {
-    const a = [...arr];
+    const a = arr.slice();
     for (let i = a.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [a[i], a[j]] = [a[j], a[i]];
@@ -249,548 +95,404 @@
     return a;
   }
 
-  function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
-    document.body.classList.toggle('results-active', id === 'screen-results');
-    document.body.classList.toggle('settings-active', id === 'screen-settings');
-    document.body.classList.toggle('game-active', id === 'screen-game');
-    window.scrollTo(0, 0);
-    refreshInstall();
+  /* ------------------------------------------------------------ Préférences */
+  function loadPrefs() {
+    const p = E.store.load('prefs', {});
+    const saved = Array.isArray(p.tables)
+      ? p.tables.map(Number).filter((n) => allTables.includes(n))
+      : [];
+    selected = saved.length ? [...new Set(saved)] : D.tables.defaults.slice();
+    soundOn = typeof p.sound === 'boolean' ? p.sound : true;
+    if (!soundOn) E.sound.enable(false);   // enable(true) créerait l'AudioContext avant tout geste
+  }
+  function savePrefs() {
+    E.store.save('prefs', { tables: selected.slice(), sound: soundOn });
   }
 
-  function startGame(customQueue) {
-    if (!customQueue && selectedTables.length === 0) return;
-    queue = customQueue ? shuffle(customQueue) : buildQueue();
-    wrongSet = new Set();
+  function loadErrorHistory() {
+    const h = E.store.load('errors', {});
+    return h && typeof h === 'object' && !Array.isArray(h) ? h : {};
+  }
+
+  /* --------------------------------------------------- Écran 1 : les tables */
+  const grid = $('#tables-grid');
+  const startBtn = $('#start-btn');
+
+  function renderTableButtons() {
+    grid.innerHTML = '';
+    allTables.forEach((t) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'table-btn';
+      btn.textContent = String(t);
+      btn.dataset.table = String(t);
+      btn.setAttribute('aria-label', `Table de ${t}`);
+      grid.appendChild(btn);
+    });
+    syncTableButtons();
+  }
+
+  function syncTableButtons() {
+    grid.querySelectorAll('.table-btn').forEach((btn) => {
+      const on = selected.includes(Number(btn.dataset.table));
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+    startBtn.disabled = selected.length === 0;
+  }
+
+  function toggleTable(t) {
+    selected = selected.includes(t) ? selected.filter((x) => x !== t) : [...selected, t];
+    syncTableButtons();
+    savePrefs();
+  }
+
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.table-btn');
+    if (btn) toggleTable(Number(btn.dataset.table));
+  });
+  $('#select-all-btn').addEventListener('click', () => {
+    selected = allTables.slice();
+    syncTableButtons();
+    savePrefs();
+  });
+  $('#deselect-btn').addEventListener('click', () => {
+    selected = [];
+    syncTableButtons();
+    savePrefs();
+  });
+
+  const soundToggle = $('#sound-toggle');
+  soundToggle.addEventListener('change', () => {
+    soundOn = soundToggle.checked;
+    E.sound.enable(soundOn);
+    savePrefs();
+  });
+
+  $('#reset-progress').addEventListener('click', () => {
+    const ok = window.confirm(
+      'Effacer toute la progression ?\n(historique des erreurs et série de jours)');
+    if (!ok) return;
+    ['errors', 'streak', 'daily'].forEach((k) => E.store.remove(k));
+    window.location.reload();
+  });
+
+  /* ----------------------------------------------------- Écran 2 : la partie */
+  const answerEl = $('#answer');
+  const feedbackEl = $('#feedback');
+  const nextBtn = $('#next-btn');
+  const cardEl = $('#question-card');
+  const mascotEl = $('#mascot');
+  const submitBtn = $('#submit-btn');
+
+  function buildOps() {
+    const ops = [];
+    selected.forEach((t) => {
+      range(D.terms.min, D.terms.max).forEach((i) => ops.push([t, i]));
+    });
+    return ops;
+  }
+
+  function startGame(ops) {
+    const list = ops && ops.length ? ops : buildOps();
+    if (!list.length) return;
+    clearTimeout(advanceTimer);
+    lastOps = list.map((o) => o.slice());
+    queue = shuffle(list);
     errorCounts = {};
     slowSet = new Set();
     opTimes = {};
     tableStats = {};
-    scoreCorrect = 0;
-    scoreWrong = 0;
+    correctCount = 0;
+    wrongCount = 0;
     totalOps = queue.length;
     mascotIdx = 0;
+    committed = false;
     savePrefs();
-    bumpStreak();
-    renderStreak();
-    ensureAudio();
-    updateScoreDisplay();
-    showScreen('screen-game');
+    E.sound.resume();
+    E.screens.show('screen-play');
+    updateScore();
     nextQuestion();
   }
 
-  function goHome() {
-    showScreen('screen-settings');
-  }
-
-  function restartGame() {
-    startGame();
-  }
-
-  function reviewErrors() {
-    const keys = new Set([...Object.keys(errorCounts), ...slowSet]);
-    const ops = [...keys].map(k => k.split('×').map(Number));
-    if (ops.length === 0) return;
-    startGame(ops);
-  }
-
   function nextQuestion() {
-    if (queue.length === 0) {
+    clearTimeout(advanceTimer);
+    advanceTimer = null;
+    if (!queue.length) {
       showResults();
       return;
     }
+    current = queue.shift();
     answered = false;
-    currentOp = queue.shift();
-    window.scrollTo(0, 0);   // chaque question repart en haut de l'écran
+    answerStr = '';
+    window.scrollTo(0, 0);
 
-    const input = document.getElementById('answer-input');
-    input.value = '';
-    input.readOnly = true;
-    input.setAttribute('inputmode', 'none');
-    input.className = 'answer-input';
-    input.disabled = false;
-    document.getElementById('submit-btn').disabled = false;
-    document.getElementById('feedback').textContent = '';
-    document.getElementById('feedback').className = 'feedback';
-    document.getElementById('next-btn').classList.remove('visible');
+    answerEl.textContent = '';
+    answerEl.className = 'answer-input';
+    submitBtn.disabled = false;
+    feedbackEl.textContent = '';
+    feedbackEl.className = 'feedback';
+    nextBtn.classList.remove('visible');
 
-    const numpadButtons = document.querySelectorAll('.numpad-btn');
-    numpadButtons.forEach(btn => {
-      btn.setAttribute('aria-label', `Touche ${btn.dataset.key}`);
-    });
+    const q = $('#question-text');
+    q.textContent = '';
+    q.append(`${current[0]} `);
+    q.append(span('op-symbol', '×'));
+    q.append(` ${current[1]} `);
+    q.append(span('equals', '='));
 
-    document.getElementById('question-text').innerHTML =
-      `${currentOp[0]} <span class="op-symbol">×</span> ${currentOp[1]} <span class="equals">=</span>`;
-
-    document.getElementById('mascot').textContent = mascots[mascotIdx % mascots.length];
+    mascotEl.textContent = D.mascots[mascotIdx % D.mascots.length];
     mascotIdx++;
+    startedAt = Date.now();
+  }
 
-    questionStart = Date.now();
-    updateProgress();
-    input.blur();
+  function span(cls, text) {
+    const s = document.createElement('span');
+    s.className = cls;
+    s.textContent = text;
+    return s;
   }
 
   function checkAnswer() {
-    if (answered) return;
-    const input = document.getElementById('answer-input');
-    const val = input.value.trim();
-    if (val === '') return;
+    if (answered || answerStr === '' || !current) return;
 
-    const userAnswer = parseInt(val, 10);
-    const correctAnswer = currentOp[0] * currentOp[1];
-    const key = `${currentOp[0]}×${currentOp[1]}`;
-    const elapsed = Date.now() - questionStart;
-    const table = currentOp[0];
+    const [a, b] = current;
+    const expected = a * b;
+    const ok = parseInt(answerStr, 10) === expected;
+    const key = keyOf(a, b);
+    const elapsed = Date.now() - startedAt;
     answered = true;
-    input.disabled = true;
-    document.getElementById('submit-btn').disabled = true;
+    submitBtn.disabled = true;
 
-    if (!tableStats[table]) tableStats[table] = { asked: 0, correct: 0 };
-    tableStats[table].asked++;
+    const stat = tableStats[a] || (tableStats[a] = { asked: 0, correct: 0 });
+    stat.asked++;
+    E.sound.feedback(ok);
 
-    playFeedbackSound(userAnswer === correctAnswer);
-
-    if (userAnswer === correctAnswer) {
-      scoreCorrect++;
-      wrongSet.delete(key);
-      tableStats[table].correct++;
+    if (ok) {
+      correctCount++;
+      stat.correct++;
       if (!(key in opTimes) || elapsed < opTimes[key]) opTimes[key] = elapsed;
-      if (elapsed > SLOW_MS) slowSet.add(key); else slowSet.delete(key);
-      input.classList.add('correct-input');
-      const slowNote = elapsed > SLOW_MS ? ' (un peu lent 🐢)' : '';
-      const feedback = document.getElementById('feedback');
-      feedback.textContent = `✅ Bravo ! ${currentOp[0]} × ${currentOp[1]} = ${correctAnswer}${slowNote}`;
-      feedback.className = 'feedback correct';
-      document.getElementById('mascot').textContent = '🎉';
-      triggerBurst(true);
-      triggerHaptic('success');
-      setTimeout(() => nextQuestion(), 850);
+      const slow = elapsed > D.slowMs;
+      if (slow) slowSet.add(key); else slowSet.delete(key);
+      answerEl.classList.add('correct-input');
+      feedbackEl.textContent = `✅ Bravo ! ${a} × ${b} = ${expected}${slow ? ' (un peu lent 🐢)' : ''}`;
+      feedbackEl.className = 'feedback correct';
+      mascotEl.textContent = '🎉';
+      E.fx.burst(true);
+      E.haptic('success');
+      advanceTimer = setTimeout(nextQuestion, 850);
     } else {
-      scoreWrong++;
-      wrongSet.add(key);
+      wrongCount++;
       errorCounts[key] = (errorCounts[key] || 0) + 1;
-      input.classList.add('wrong-input');
-
-      const feedback = document.getElementById('feedback');
+      answerEl.classList.add('wrong-input');
       const strong = document.createElement('strong');
-      strong.textContent = String(correctAnswer);
-      feedback.textContent = '❌ Pas tout à fait… La réponse était ';
-      feedback.appendChild(strong);
-      feedback.className = 'feedback wrong';
-      document.getElementById('mascot').textContent = '😬';
-      document.getElementById('question-card').classList.add('shake');
-      triggerHaptic('error');
-      setTimeout(() => document.getElementById('question-card').classList.remove('shake'), 260);
-      const pos = Math.floor(Math.random() * Math.min(4, queue.length + 1)) + 1;
-      queue.splice(pos, 0, currentOp);
+      strong.textContent = String(expected);
+      feedbackEl.textContent = '❌ Pas tout à fait… La réponse était ';
+      feedbackEl.appendChild(strong);
+      feedbackEl.className = 'feedback wrong';
+      mascotEl.textContent = '😬';
+      cardEl.classList.add('shake');
+      setTimeout(() => cardEl.classList.remove('shake'), 400);
+      E.haptic('error');
+      // La question ratée revient quelques questions plus loin.
+      const pos = Math.floor(Math.random() * Math.min(D.requeueSpan, queue.length + 1)) + 1;
+      queue.splice(pos, 0, current);
+      nextBtn.classList.add('visible');
     }
-
-    updateScoreDisplay();
-    document.getElementById('next-btn').classList.add('visible');
+    updateScore();
   }
 
-  function updateProgress() {
-    const done = totalOps + wrongSet.size - queue.length;
-    const total = totalOps + wrongSet.size;
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    const remaining = Math.max(total - done, 0);
-    document.getElementById('progress-text').textContent = `${done} / ${total} • ${remaining} restantes`;
-    document.getElementById('progress-fill').style.width = `${pct}%`;
-    document.getElementById('score-remaining').textContent = String(queue.length);
-  }
-
-  function updateScoreDisplay() {
-    document.getElementById('score-correct').textContent = String(scoreCorrect);
-    document.getElementById('score-wrong').textContent = String(scoreWrong);
-    document.getElementById('score-remaining').textContent = String(queue.length);
-    updateProgress();
-  }
-
-  function showResults() {
-    const total = scoreCorrect + scoreWrong;
-    const rate = total > 0 ? Math.round((scoreCorrect / total) * 100) : 100;
-    document.getElementById('res-correct').textContent = String(scoreCorrect);
-    document.getElementById('res-wrong').textContent = String(scoreWrong);
-    document.getElementById('res-rate').textContent = `${rate}%`;
-
-    let emoji, title, sub;
-    if (rate === 100) { emoji = '🏆'; title = 'Parfait !'; sub = 'Tu as tout bon du premier coup, champion !'; }
-    else if (rate >= 80) { emoji = '⭐'; title = 'Excellent !'; sub = `${rate}% de réussite, c'est super !`; }
-    else if (rate >= 60) { emoji = '👍'; title = 'Bien joué !'; sub = `${rate}% de réussite, continue à t'entraîner !`; }
-    else { emoji = '💪'; title = 'Courage !'; sub = `${rate}% — pratique encore, tu vas y arriver !`; }
-
-    document.getElementById('result-emoji').textContent = emoji;
-    document.getElementById('result-title').textContent = title;
-    document.getElementById('result-subtitle').textContent = sub;
-
-    persistSessionErrors();
-    logDaily(total, scoreCorrect);
-    renderWeek();
-    renderTableSummary();
-    renderErrorReport();
-
-    const hasMisses = Object.keys(errorCounts).length > 0 || slowSet.size > 0;
-    document.getElementById('review-btn').disabled = !hasMisses;
-
-    showScreen('screen-results');
-    triggerBurst(rate >= 80);
-  }
-
-  function renderTableSummary() {
-    const wrap = document.getElementById('table-summary-list');
-    const summaryBlock = document.getElementById('table-summary');
-    wrap.innerHTML = '';
-
-    const tables = Object.keys(tableStats).map(Number).sort((a, b) => a - b);
-    if (tables.length === 0) {
-      summaryBlock.style.display = 'none';
-      return;
-    }
-    summaryBlock.style.display = '';
-
-    for (const t of tables) {
-      const { asked, correct } = tableStats[t];
-      const pct = asked > 0 ? Math.round((correct / asked) * 100) : 100;
-      const color = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
-      const row = document.createElement('div');
-      row.className = 'table-summary-row';
-
-      const tName = document.createElement('span');
-      tName.className = 'tname';
-      tName.textContent = `Table de ${t}`;
-
-      const tBar = document.createElement('span');
-      tBar.className = 'tbar';
-      const tBarFill = document.createElement('span');
-      tBarFill.className = 'tbar-fill';
-      tBarFill.style.width = `${pct}%`;
-      tBarFill.style.background = color;
-      tBar.appendChild(tBarFill);
-
-      const tPct = document.createElement('span');
-      tPct.className = 'tpct';
-      tPct.textContent = `${pct}%`;
-      tPct.style.color = color;
-
-      row.append(tName, tBar, tPct);
-      wrap.appendChild(row);
-    }
-  }
-
-  function fmtTime(ms) {
-    return (ms / 1000).toFixed(1).replace('.', ',') + ' s';
-  }
-
-  function renderErrorReport() {
-    const listEl = document.getElementById('error-list');
-    listEl.innerHTML = '';
-
-    const history = loadHistory();
-    const keys = new Set([...Object.keys(errorCounts), ...slowSet]);
-
-    if (keys.size === 0) {
-      listEl.innerHTML = '<div class="no-errors">🎉 Aucune erreur, bravo !</div>';
-      return;
-    }
-
-    const entries = [...keys].sort((ka, kb) => {
-      const ea = errorCounts[ka] || 0, eb = errorCounts[kb] || 0;
-      if (eb !== ea) return eb - ea;
-      return (opTimes[kb] || 0) - (opTimes[ka] || 0);
-    });
-
-    for (const key of entries) {
-      const [a, b] = key.split('×').map(Number);
-      const result = a * b;
-      const count = errorCounts[key] || 0;
-      const row = document.createElement('div');
-      row.className = 'error-row';
-
-      const op = document.createElement('span');
-      op.className = 'op';
-      op.innerHTML = `${a} <span class="x">×</span> ${b} = <span class="res">${result}</span>`;
-
-      const timeNote = key in opTimes ? document.createElement('span') : null;
-      if (timeNote) {
-        timeNote.className = 'time';
-        timeNote.textContent = `⏱ ${fmtTime(opTimes[key])}`;
-        op.appendChild(timeNote);
-      }
-
-      const meta = document.createElement('span');
-      meta.className = 'error-row-meta';
-
-      const histNote = history[key] ? document.createElement('span') : null;
-      if (histNote) {
-        histNote.className = 'history';
-        histNote.textContent = `total : ${history[key]}`;
-        meta.appendChild(histNote);
-      }
-
-      const badge = document.createElement('span');
-      badge.className = 'count';
-      if (count > 0) {
-        badge.textContent = count > 1 ? `${count} erreurs` : '1 erreur';
-      } else {
-        badge.textContent = '🐢 hésitation';
-        badge.classList.add('error-badge--hesitant');
-      }
-      meta.appendChild(badge);
-
-      row.append(op, meta);
-      listEl.appendChild(row);
-    }
-  }
-
-  function triggerHaptic(type = 'tap') {
-    if (!('vibrate' in navigator)) return;
-    if (type === 'success') navigator.vibrate([20, 35, 25]);
-    else if (type === 'error') navigator.vibrate([30, 25, 60]);
-    else navigator.vibrate(10);
-  }
-
-  function updateViewportScale() {
-    const vh = window.innerHeight || document.documentElement.clientHeight;
-    const scale = Math.min(1, Math.max(0.75, vh / 820));
-    document.documentElement.style.setProperty('--app-scale', scale.toFixed(3));
-  }
-
-  function lockAnswerInput() {
-    const input = document.getElementById('answer-input');
-    input.readOnly = true;
-    input.tabIndex = -1;
-    input.setAttribute('inputmode', 'none');
-    input.setAttribute('autocomplete', 'off');
-    input.setAttribute('autocorrect', 'off');
-    input.setAttribute('spellcheck', 'false');
-
-    input.addEventListener('focus', () => {
-      setTimeout(() => input.blur(), 0);
-    });
-
-    input.addEventListener('keydown', e => e.preventDefault());
-    input.addEventListener('beforeinput', e => e.preventDefault());
-    input.addEventListener('touchstart', e => {
-      e.preventDefault();
-      input.blur();
-    }, { passive: false });
+  function updateScore() {
+    const remaining = Math.max(totalOps - correctCount, 0);
+    $('#score-correct').textContent = String(correctCount);
+    $('#score-wrong').textContent = String(wrongCount);
+    $('#score-remaining').textContent = String(remaining);
+    $('#progress-text').textContent = `${correctCount} / ${totalOps}`;
+    $('#progress-fill').style.width = `${totalOps ? Math.round((correctCount / totalOps) * 100) : 0}%`;
   }
 
   function numpadPress(k) {
     if (answered) return;
-    const input = document.getElementById('answer-input');
-    if (k === 'clear') {
-      input.value = '';
-      input.blur();
-      triggerHaptic();
-      return;
-    }
-    if (k === 'del') {
-      input.value = input.value.slice(0, -1);
-    } else {
-      if (input.value.length >= 3) return;
-      input.value += k;
-    }
-    input.blur();
-    triggerHaptic();
+    if (k === 'clear') answerStr = '';
+    else if (k === 'del') answerStr = answerStr.slice(0, -1);
+    else if (answerStr.length < D.maxDigits) answerStr += k;
+    else return;
+    answerEl.textContent = answerStr;
+    E.haptic('tap');
   }
 
-  function triggerBurst(positive) {
-    const wrap = document.getElementById('burst');
-    wrap.innerHTML = '';
-    const colors = positive
-      ? ['#FFD60A', '#4ADE80', '#60A5FA', '#F472B6', '#FBBF24']
-      : ['#FF6B6B', '#F87171', '#FCA5A5'];
-    const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-    const n = positive ? 28 : 12;
-    for (let i = 0; i < n; i++) {
-      const p = document.createElement('div');
-      p.className = 'burst-particle';
-      const angle = (i / n) * 360;
-      const dist = positive ? (80 + Math.random() * 160) : (40 + Math.random() * 80);
-      const rad = angle * Math.PI / 180;
-      p.style.left = `${cx}px`;
-      p.style.top = `${cy}px`;
-      p.style.background = colors[i % colors.length];
-      p.style.width = `${positive ? 10 : 7}px`;
-      p.style.height = `${positive ? 10 : 7}px`;
-      p.style.setProperty('--dx', `${Math.cos(rad) * dist}px`);
-      p.style.setProperty('--dy', `${Math.sin(rad) * dist}px`);
-      p.style.animationDuration = positive ? '0.9s' : '0.6s';
-      wrap.appendChild(p);
-    }
-    setTimeout(() => { wrap.innerHTML = ''; }, 1000);
-  }
+  const numpad = $('#numpad');
+  numpad.addEventListener('click', (e) => {
+    const btn = e.target.closest('.numpad-btn');
+    if (btn) numpadPress(btn.dataset.key);
+  });
+  // À la souris, cliquer une touche ne doit pas lui donner le focus : sinon
+  // Entrée (pour valider) « re-taperait » la même touche.
+  numpad.addEventListener('mousedown', (e) => e.preventDefault());
+  submitBtn.addEventListener('click', checkAnswer);
+  nextBtn.addEventListener('click', nextQuestion);
+  $('#quit-btn').addEventListener('click', () => {
+    clearTimeout(advanceTimer);
+    commitSession();
+    E.screens.show('screen-home');
+  });
 
-  document.getElementById('app-version').textContent = APP_VERSION;
-
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', (e) => {
+    if (E.screens.current() !== 'screen-play') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const button = e.target.closest && e.target.closest('button');
+    const inFlow = button && button.closest('#numpad, #submit-btn, #next-btn');
     if (e.key === 'Enter') {
-      if (answered) nextQuestion();
-      else checkAnswer();
-    }
-    if (e.key >= '0' && e.key <= '9' && !answered) {
+      // Un bouton hors du flux de jeu (« Changer les tables ») garde son propre
+      // comportement. Pour les autres on prend la main et on annule le « clic »
+      // que le navigateur enverrait en plus : sinon la question avance deux fois.
+      if (button && !inFlow) return;
+      e.preventDefault();
+      if (answered) nextQuestion(); else checkAnswer();
+    } else if (/^[0-9]$/.test(e.key)) {
       numpadPress(e.key);
-    }
-    if (e.key === 'Backspace' && !answered) {
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
       numpadPress('del');
-    }
-    if (e.key.toLowerCase() === 'c' && !answered) {
+    } else if (e.key.toLowerCase() === 'c') {
       numpadPress('clear');
     }
   });
 
-  document.getElementById('select-all-btn').addEventListener('click', selectAll);
-  document.getElementById('deselect-btn').addEventListener('click', deselectAll);
-  document.getElementById('start-btn').addEventListener('click', () => startGame());
-  document.getElementById('go-home-game').addEventListener('click', goHome);
-  document.getElementById('go-home-results').addEventListener('click', goHome);
-  document.getElementById('restart-btn').addEventListener('click', restartGame);
-  document.getElementById('submit-btn').addEventListener('click', checkAnswer);
-  document.getElementById('next-btn').addEventListener('click', nextQuestion);
-  document.getElementById('review-btn').addEventListener('click', reviewErrors);
-
-  const printBtn = document.getElementById('print-btn');
-  if (printBtn) {
-    printBtn.addEventListener('click', () => window.print());
+  /* -------------------------------------------------------- Enregistrement */
+  // Une partie est enregistrée une seule fois : à la fin, ou quand on la quitte
+  // en cours de route (ce qui a été répondu compte quand même).
+  function commitSession() {
+    if (committed) return;
+    committed = true;
+    const seen = correctCount + wrongCount;
+    if (!seen) return;
+    const hist = loadErrorHistory();
+    Object.keys(errorCounts).forEach((k) => { hist[k] = (hist[k] || 0) + errorCounts[k]; });
+    E.store.save('errors', hist);
+    E.history.bumpStreak();
+    E.history.logDaily(seen, correctCount);
+    E.history.renderStreak('#streak-badge');
   }
 
-  // initTables() charge les préférences (tables cochées + son), donc avant le
-  // câblage de la case "son" pour que la case reflète le choix mémorisé.
-  initTables();
-  lockAnswerInput();
+  /* ---------------------------------------------------------- Écran 3 : bilan */
+  const fmtTime = (ms) => `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
+  const barColor = (pct) => (pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)');
 
-  const soundToggle = document.getElementById('sound-toggle');
-  if (soundToggle) {
-    soundToggle.checked = soundOn;
-    soundToggle.addEventListener('change', () => {
-      soundOn = soundToggle.checked;
-      if (soundOn) ensureAudio();
-      savePrefs();
+  function showResults() {
+    const total = correctCount + wrongCount;
+    const rate = total > 0 ? Math.round((correctCount / total) * 100) : 100;
+    const tier = D.tiers.find((t) => rate >= t.min) || D.tiers[D.tiers.length - 1];
+
+    $('#res-correct').textContent = String(correctCount);
+    $('#res-wrong').textContent = String(wrongCount);
+    $('#res-rate').textContent = `${rate}%`;
+    $('#result-emoji').textContent = tier.emoji;
+    $('#result-title').textContent = tier.title;
+    $('#result-subtitle').textContent = tier.sub.replace('{rate}', String(rate));
+
+    commitSession();
+    E.history.renderWeek({ bars: '#week-bars', block: '#history-week', summary: '#week-summary' });
+    renderTableSummary();
+    renderErrorReport();
+    $('#review-btn').disabled = Object.keys(errorCounts).length === 0 && slowSet.size === 0;
+
+    E.screens.show('screen-done');
+    E.fx.burst(rate >= 80);
+    E.announce(`Partie terminée. ${tier.title} ${correctCount} bonnes réponses, ${wrongCount} erreurs.`);
+  }
+
+  function renderTableSummary() {
+    const wrap = $('#table-summary-list');
+    const block = $('#table-summary');
+    wrap.innerHTML = '';
+    const tables = Object.keys(tableStats).map(Number).sort((a, b) => a - b);
+    block.hidden = tables.length === 0;
+
+    tables.forEach((t) => {
+      const { asked, correct } = tableStats[t];
+      const pct = asked > 0 ? Math.round((correct / asked) * 100) : 100;
+      const row = document.createElement('div');
+      row.className = 'table-summary-row';
+      const fill = span('tbar-fill', '');
+      fill.style.width = `${pct}%`;
+      fill.style.background = barColor(pct);
+      const bar = span('tbar', '');
+      bar.appendChild(fill);
+      const pctEl = span('tpct', `${pct}%`);
+      pctEl.style.color = barColor(pct);
+      row.append(span('tname', `Table de ${t}`), bar, pctEl);
+      wrap.appendChild(row);
     });
   }
 
-  const resetBtn = document.getElementById('reset-progress');
-  if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-      const ok = window.confirm(
-        'Effacer toute la progression ?\n'
-        + '(historique des erreurs et série de jours)');
-      if (!ok) return;
-      [HISTORY_KEY, STREAK_KEY, DAILY_KEY].forEach(k => {
-        try { localStorage.removeItem(k); } catch (e) { /* ignore */ }
-      });
-      location.reload();
-    });
-  }
-
-  /* ----------------------------------- Bandeau "Installer l'appli" (en haut) */
-  (function setupInstall() {
-    const row = document.getElementById('install-row');
-    const btn = document.getElementById('install-btn');
-    const dismiss = document.getElementById('install-dismiss');
-    const hint = document.getElementById('install-hint');
-    if (!row || !btn) return;
-
-    const HIDE_KEY = 'tm_install_hidden';
-    let deferred = null;
-    let mode = null;               // null | 'prompt' | 'ios'
-    let hiddenByUser = false;
-    try { hiddenByUser = localStorage.getItem(HIDE_KEY) === '1'; } catch (e) { /* ignore */ }
-
-    function isStandalone() {
-      return window.matchMedia('(display-mode: standalone)').matches
-        || window.navigator.standalone === true
-        || document.referrer.indexOf('android-app://') === 0;
-    }
-    const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const iOSSafari = iOS && /safari/i.test(navigator.userAgent)
-      && !/crios|fxios|edgios|opios|android/i.test(navigator.userAgent);
-
-    // affiché seulement sur l'écran d'accueil, et seulement si l'appli est installable
-    refreshInstall = function () {
-      const onHome = document.getElementById('screen-settings').classList.contains('active');
-      const show = !!mode && !hiddenByUser && !isStandalone() && onHome;
-      row.hidden = !show;
-      if (!show) hint.hidden = true;
-      if (show) row.dataset.mode = mode;
-    };
-    function forget() {
-      hiddenByUser = true;
-      try { localStorage.setItem(HIDE_KEY, '1'); } catch (e) { /* ignore */ }
-      refreshInstall();
+  function renderErrorReport() {
+    const list = $('#error-list');
+    list.innerHTML = '';
+    const keys = new Set([...Object.keys(errorCounts), ...slowSet]);
+    if (keys.size === 0) {
+      list.appendChild(span('no-errors', '🎉 Aucune erreur, bravo !'));
+      return;
     }
 
-    window.addEventListener('beforeinstallprompt', e => {
-      e.preventDefault();
-      deferred = e;
-      mode = 'prompt';
-      refreshInstall();
-    });
-    window.addEventListener('appinstalled', () => {
-      deferred = null;
-      mode = null;
-      forget();
+    const history = loadErrorHistory();
+    const entries = [...keys].sort((ka, kb) => {
+      const diff = (errorCounts[kb] || 0) - (errorCounts[ka] || 0);
+      return diff || (opTimes[kb] || 0) - (opTimes[ka] || 0);
     });
 
-    btn.addEventListener('click', async () => {
-      if (mode === 'ios') {
-        hint.hidden = !hint.hidden;
-        hint.textContent = "Sur iPhone/iPad : touche « Partager » (le carré avec une flèche vers le haut), "
-          + "puis « Sur l'écran d'accueil ».";
-        return;
+    entries.forEach((key) => {
+      const [a, b] = parseKey(key);
+      const count = errorCounts[key] || 0;
+      const row = document.createElement('div');
+      row.className = 'error-row';
+
+      const op = span('op', `${a} `);
+      op.append(span('x', '×'), ` ${b} = `, span('res', String(a * b)));
+      if (key in opTimes) op.append(span('time', `⏱ ${fmtTime(opTimes[key])}`));
+
+      const meta = span('error-row-meta', '');
+      if (history[key]) meta.append(span('history', `total : ${history[key]}`));
+      const badge = span('count', count > 1 ? `${count} erreurs` : '1 erreur');
+      if (count === 0) {
+        badge.textContent = '🐢 hésitation';
+        badge.classList.add('error-badge--hesitant');
       }
-      if (!deferred) return;
-      btn.disabled = true;
-      deferred.prompt();
-      try { await deferred.userChoice; } catch (e) { /* ignore */ }
-      deferred = null;
-      mode = null;
-      btn.disabled = false;
-      refreshInstall();
+      meta.append(badge);
+
+      row.append(op, meta);
+      list.appendChild(row);
     });
-    if (dismiss) dismiss.addEventListener('click', forget);
+  }
 
-    // iOS Safari ne déclenche jamais beforeinstallprompt : on propose la marche à suivre.
-    if (iOSSafari) mode = 'ios';
-    refreshInstall();
-  })();
+  $('#review-btn').addEventListener('click', () => {
+    const keys = new Set([...Object.keys(errorCounts), ...slowSet]);
+    startGame([...keys].map(parseKey));
+  });
+  $('#print-btn').addEventListener('click', () => window.print());
+  $('#again-btn').addEventListener('click', () => startGame(lastOps));
+  $('#home-btn').addEventListener('click', () => E.screens.show('screen-home'));
 
-  renderStreak();
-  showScreen('screen-settings');
-  updateViewportScale();
-  window.addEventListener('resize', updateViewportScale);
-
-  document.querySelectorAll('.numpad-btn').forEach(button => {
-    button.addEventListener('click', () => numpadPress(button.dataset.key));
+  /* ------------------------------------------------------------ Mises à jour */
+  // Une nouvelle version n'est appliquée que depuis l'accueil : jamais en plein
+  // milieu d'une partie ni pendant la lecture du bilan. Le service worker prend
+  // la main (apply), puis la page se recharge quand il contrôle réellement la page.
+  E.on('sw:updateready', (update) => {
+    let off = null;
+    const applyIfHome = () => {
+      if (E.screens.current() !== 'screen-home') return;
+      if (off) off();
+      navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true });
+      update.apply();
+    };
+    off = E.on('screen:show', applyIfHome);
+    applyIfHome();
   });
 
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', async () => {
-      try {
-        const reloadKey = `sw-reload:${APP_VERSION}`;
-        const registration = await navigator.serviceWorker.register(`service-worker.js?v=${APP_VERSION}`);
-        if (registration.waiting) {
-          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          if (!newWorker) return;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              newWorker.postMessage({ type: 'SKIP_WAITING' });
-              if (!sessionStorage.getItem(reloadKey)) {
-                sessionStorage.setItem(reloadKey, '1');
-                window.location.reload();
-              }
-            }
-          });
-        });
-      } catch (err) {
-        console.warn('Service worker registration failed:', err);
-      }
-    });
-  }
+  /* ---------------------------------------------------------------- Démarrage */
+  loadPrefs();
+  soundToggle.checked = soundOn;
+  renderTableButtons();
+  startBtn.addEventListener('click', () => startGame());
+  E.screens.show('screen-home', { focus: false });
 })();

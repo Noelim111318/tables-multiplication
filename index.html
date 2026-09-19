@@ -1,59 +1,70 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" dir="ltr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Tables de Multiplication</title>
-  <meta name="description" content="Entraîne-toi aux tables de multiplication avec un rapport d'erreurs.">
+  <meta name="description" content="Entraîne-toi aux tables de multiplication avec un rapport d'erreurs et un bilan par table.">
+  <meta name="app-version" content="v1.2.0">
+  <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#1A0A2E">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Multiplications">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
 
-<div class="stars" id="stars"></div>
+<a class="skip-link" href="#main">Aller au contenu</a>
 
+<div class="stars" id="stars"></div>
 <div class="burst-container" id="burst"></div>
 
-<div class="container">
+<main class="container" id="main">
   <div class="install-row" id="install-row" hidden>
-    <button class="install-btn" id="install-btn" type="button">📲 Installer l'appli</button>
+    <button class="install-btn" id="install-btn" type="button" aria-label="Installer l'application">📲 Installer l'appli</button>
     <button class="install-dismiss" id="install-dismiss" type="button">Masquer</button>
+    <p class="install-hint" id="install-hint" role="status" hidden></p>
   </div>
-  <p class="install-hint" id="install-hint" hidden></p>
 
   <div class="header">
-    <div class="version-badge" id="app-version">v1.1.0</div>
+    <div class="version-badge" id="app-version">v1.2.0</div>
     <h1>⭐ Tables de Multiplication</h1>
     <p>Entraîne-toi et progresse à ton rythme !</p>
     <div class="streak-badge" id="streak-badge" hidden></div>
   </div>
 
-  <!-- SCREEN 1 : Settings -->
-  <div class="screen active" id="screen-settings">
-    <div class="settings-panel">
+  <!-- ECRAN 1 : accueil / choix des tables -->
+  <div class="screen active" id="screen-home">
+    <div class="panel">
       <h2>Choisir les tables</h2>
       <div class="tables-grid" id="tables-grid"></div>
       <div class="settings-actions">
-        <button class="btn-select-all" id="select-all-btn">Tout sélectionner</button>
-        <button class="btn-deselect" id="deselect-btn">Tout décocher</button>
+        <button class="btn-mini" id="select-all-btn" type="button">Tout sélectionner</button>
+        <button class="btn-mini btn-mini--dim" id="deselect-btn" type="button">Tout décocher</button>
       </div>
 
       <h2 class="options-title">Options</h2>
-      <label class="option-toggle" id="sound-toggle-wrap">
+      <label class="option-toggle">
         <input type="checkbox" id="sound-toggle">
         <span>🔔 Petits sons quand on répond</span>
       </label>
 
       <button class="reset-progress" id="reset-progress" type="button">Réinitialiser la progression</button>
     </div>
-    <button class="start-btn" id="start-btn">🚀 C'est parti !</button>
+    <button class="btn btn--primary btn--big" id="start-btn" type="button">🚀 C'est parti !</button>
   </div>
 
-  <!-- SCREEN 2 : Game -->
-  <div class="screen" id="screen-game">
+  <!-- ECRAN 2 : jeu -->
+  <div class="screen" id="screen-play">
+    <h2 class="sr-only">Question en cours</h2>
+
     <div class="progress-wrap">
       <div class="progress-info">
         <span>Progression</span>
@@ -71,39 +82,38 @@
     <div class="question-card" id="question-card">
       <span class="mascot" id="mascot" aria-hidden="true">🦊</span>
       <div class="question-text" id="question-text" aria-live="polite"></div>
-      <div class="answer-wrap" id="answer-wrap">
-        <input class="answer-input" id="answer-input" name="answer-input" type="text" inputmode="none" pattern="[0-9]*" min="0" max="999" placeholder="?" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Ta réponse" readonly tabindex="-1">
-        <button class="submit-btn" id="submit-btn" name="submit-answer" aria-label="Valider la réponse">OK ✓</button>
+      <div class="answer-wrap">
+        <output class="answer-input" id="answer" aria-live="off" aria-label="Ta réponse"></output>
+        <button class="submit-btn" id="submit-btn" type="button" aria-label="Valider la réponse">OK ✓</button>
       </div>
     </div>
 
     <div class="feedback" id="feedback" role="status" aria-live="polite"></div>
 
-    <!-- Numpad for mobile ease -->
     <div class="numpad" id="numpad">
-      <button class="numpad-btn" data-key="7">7</button>
-      <button class="numpad-btn" data-key="8">8</button>
-      <button class="numpad-btn" data-key="9">9</button>
-      <button class="numpad-btn" data-key="4">4</button>
-      <button class="numpad-btn" data-key="5">5</button>
-      <button class="numpad-btn" data-key="6">6</button>
-      <button class="numpad-btn" data-key="1">1</button>
-      <button class="numpad-btn" data-key="2">2</button>
-      <button class="numpad-btn" data-key="3">3</button>
-      <button class="numpad-btn clear" data-key="clear">C</button>
-      <button class="numpad-btn" data-key="0">0</button>
-      <button class="numpad-btn del" data-key="del">⌫</button>
+      <button class="numpad-btn" type="button" data-key="7">7</button>
+      <button class="numpad-btn" type="button" data-key="8">8</button>
+      <button class="numpad-btn" type="button" data-key="9">9</button>
+      <button class="numpad-btn" type="button" data-key="4">4</button>
+      <button class="numpad-btn" type="button" data-key="5">5</button>
+      <button class="numpad-btn" type="button" data-key="6">6</button>
+      <button class="numpad-btn" type="button" data-key="1">1</button>
+      <button class="numpad-btn" type="button" data-key="2">2</button>
+      <button class="numpad-btn" type="button" data-key="3">3</button>
+      <button class="numpad-btn clear" type="button" data-key="clear" aria-label="Tout effacer">C</button>
+      <button class="numpad-btn" type="button" data-key="0">0</button>
+      <button class="numpad-btn del" type="button" data-key="del" aria-label="Effacer le dernier chiffre">⌫</button>
     </div>
 
-    <button class="next-btn" id="next-btn">Question suivante →</button>
+    <button class="next-btn" id="next-btn" type="button">Question suivante →</button>
 
-    <button class="ghost-link" id="go-home-game">← Changer les tables</button>
+    <button class="btn btn--ghost" id="quit-btn" type="button">← Changer les tables</button>
   </div>
 
-  <!-- SCREEN 3 : Results -->
-  <div class="screen" id="screen-results">
+  <!-- ECRAN 3 : bilan -->
+  <div class="screen" id="screen-done">
     <div class="results-screen">
-      <div class="big-emoji" id="result-emoji">🏆</div>
+      <div class="big-emoji" id="result-emoji" aria-hidden="true">🏆</div>
       <h2 id="result-title">Bravo !</h2>
       <p id="result-subtitle"></p>
       <div class="results-grid">
@@ -112,33 +122,35 @@
         <div class="result-item result-item--wide"><div class="n" id="res-rate">0%</div><div class="l">🎯 Taux de réussite</div></div>
       </div>
 
-      <div class="history-week" id="history-week" hidden>
-        <h3>📅 7 derniers jours</h3>
+      <div class="report-block" id="history-week" hidden>
+        <h3 class="report-title report-title--blue">📅 7 derniers jours</h3>
         <div class="week-bars" id="week-bars"></div>
         <p class="week-summary" id="week-summary"></p>
       </div>
 
-      <div class="table-summary" id="table-summary">
-        <h3>📊 Bilan par table</h3>
+      <div class="report-block" id="table-summary">
+        <h3 class="report-title report-title--blue">📊 Bilan par table</h3>
         <div id="table-summary-list"></div>
       </div>
 
-      <div class="error-report" id="error-report">
-        <h3>📋 Multiplications à revoir</h3>
+      <div class="report-block" id="error-report">
+        <h3 class="report-title report-title--red">📋 Multiplications à revoir</h3>
         <div class="error-list" id="error-list"></div>
       </div>
 
       <div class="results-actions">
-        <button class="action-btn review" id="review-btn">🔁 Réviser mes erreurs</button>
-        <button class="action-btn print" id="print-btn">🖨️ Imprimer le rapport</button>
+        <button class="action-btn review" id="review-btn" type="button">🔁 Réviser mes erreurs</button>
+        <button class="action-btn print" id="print-btn" type="button">🖨️ Imprimer le rapport</button>
       </div>
 
-      <button class="restart-btn" id="restart-btn">🔄 Recommencer</button>
-      <button class="ghost-link results" id="go-home-results">← Choisir d'autres tables</button>
+      <button class="btn btn--primary btn--big" id="again-btn" type="button">🔄 Recommencer</button>
+      <button class="btn btn--ghost" id="home-btn" type="button">← Choisir d'autres tables</button>
     </div>
   </div>
-</div>
+</main>
 
+<script src="data.js"></script>
+<script src="engine/engine.js"></script>
 <script src="app.js"></script>
 
 </body>
