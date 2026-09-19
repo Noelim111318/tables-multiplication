@@ -8,7 +8,7 @@
  *     puis ajoute tout nouveau fichier statique a APP_SHELL ci-dessous.
  */
 self.APP_SLUG = 'tables-multiplication';
-self.APP_VERSION = 'v1.2.2';
+self.APP_VERSION = 'v1.2.3';
 
 self.APP_SHELL = [
   './',

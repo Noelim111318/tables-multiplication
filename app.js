@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = 'v1.2.2';
+  const APP_VERSION = 'v1.2.3';
   const APP_ID = 'tables-multiplication';
   const E = window.AppEngine;
   const D = window.APP_DATA;
@@ -56,6 +56,8 @@
       weekSummary: (seen, days, rate) =>
         `${seen} questions sur ${days} jour${days > 1 ? 's' : ''} — ${rate}% de réussite`,
       streak: (n) => `🔥 ${n} jour${n > 1 ? 's' : ''} d'affilée`,
+      installIosHint: 'Sur iPhone/iPad : touche « Partager » (le carré avec une flèche vers le haut), '
+        + 'puis « Sur l\'écran d\'accueil ».',
     },
   });
 
