@@ -64,10 +64,15 @@
   width: 20px; height: 20px; flex-shrink: 0; cursor: pointer;
   accent-color: var(--yellow); margin-top: 1px;
 }
-.reset-progress {
-  display: block; width: 100%; margin-top: 16px;
-  background: none; border: none; color: var(--ink-dim);
-  font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: underline;
+/* Liens rares, volontairement à l'écart des réglages (évite les faux clics). */
+.home-footer {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  gap: 4px 22px; width: 100%; margin-top: 6px;
+}
+.reset-progress, .diag-link {
+  background: none; border: none; padding: 10px 4px;
+  color: var(--ink-dim); font-size: 0.78rem; font-weight: 700;
+  cursor: pointer; text-decoration: underline;
 }
 
 .btn--big { width: 100%; padding: 16px; border-radius: 18px; font-size: 1.22rem; font-weight: 900; }

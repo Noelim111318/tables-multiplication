@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = 'v1.2.1';
+  const APP_VERSION = 'v1.2.2';
   const APP_ID = 'tables-multiplication';
   const E = window.AppEngine;
   const D = window.APP_DATA;
@@ -58,6 +58,23 @@
       streak: (n) => `🔥 ${n} jour${n > 1 ? 's' : ''} d'affilée`,
     },
   });
+
+  /* ------------------------------------------------- Journal des ouvertures */
+  // Diagnostic (voir diag.html) : garde les 30 dernières ouvertures (heure,
+  // version, mode, clés de progression présentes) dans une clé hors espace de
+  // l'appli, pour situer un éventuel effacement des données.
+  (function logOpening() {
+    try {
+      const own = E.store.keys();
+      const log = JSON.parse(localStorage.getItem('diag:log') || '[]');
+      log.push({
+        t: new Date().toISOString(), a: APP_ID, v: APP_VERSION,
+        m: window.matchMedia('(display-mode: standalone)').matches ? 1 : 0,
+        k: ['prefs', 'errors', 'streak', 'daily'].filter((k) => own.includes(k)).join(','),
+      });
+      localStorage.setItem('diag:log', JSON.stringify(log.slice(-30)));
+    } catch (e) { /* ignore */ }
+  })();
 
   /* ------------------------------------------------------------------ État */
   let selected = [];            // tables cochées

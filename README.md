@@ -1,4 +1,4 @@
-# ⭐ Tables de Multiplication (PWA)
+# Tables de Multiplication (PWA)
 
 Appli web pour s'entraîner aux tables de multiplication. On choisit les tables à
 travailler, l'appli pose les multiplications dans le désordre, et à la fin elle
@@ -89,6 +89,15 @@ Le lien **« Réinitialiser la progression »** efface `errors`, `streak` et `da
 de `app.js`) les recopie vers les clés ci-dessus puis supprime les anciennes :
 personne ne perd sa série ni son historique.
 
+## Diagnostic
+
+En bas de l'écran d'accueil, à côté de « Réinitialiser la progression », le lien
+**Diagnostic** ouvre [`diag.html`](diag.html) : ce que l'appli a en mémoire sur l'appareil (clés
+`tables-*`, espace utilisé, service worker, caches) et un **journal des 30
+dernières ouvertures** (clé `diag:log`, hors espace de l'appli) qui permet de
+situer un éventuel effacement des données. Boutons **Copier** et **Partager**.
+Lecture seule, rien n'est envoyé.
+
 ## Démarrage local
 
 ```bash
@@ -166,6 +175,7 @@ différente, remplace directement ces fichiers en gardant les mêmes noms et tai
 |---|---|
 | `index.html` | Structure des 3 écrans (accueil / partie / bilan) |
 | `data.js` | Réglages et contenu (`window.APP_DATA`) |
+| `diag.html` | Page de diagnostic (lecture seule) : clés enregistrées, journal des ouvertures, caches |
 | `app.js` | Logique du jeu et du bilan |
 | `app.css` | Styles (importe `engine/engine.css`) |
 | `manifest.json` | Config PWA (nom, couleurs, icônes) |
