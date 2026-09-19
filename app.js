@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = 'v1.2.0';
+  const APP_VERSION = 'v1.2.1';
   const APP_ID = 'tables-multiplication';
   const E = window.AppEngine;
   const D = window.APP_DATA;
@@ -373,6 +373,20 @@
     E.history.bumpStreak();
     E.history.logDaily(seen, correctCount);
     E.history.renderStreak('#streak-badge');
+    requestPersistence();
+  }
+
+  // Demande au navigateur de ne pas purger le stockage local (historique, série).
+  // Chrome l'accorde d'office aux applis installées ; Firefox interroge
+  // l'utilisateur, d'où un seul essai, après une première partie plutôt qu'au
+  // démarrage. Sans effet là où l'API n'existe pas.
+  let persistAsked = false;
+  function requestPersistence() {
+    if (persistAsked || !(navigator.storage && navigator.storage.persist)) return;
+    persistAsked = true;
+    navigator.storage.persisted()
+      .then((yes) => yes || navigator.storage.persist())
+      .catch(() => { /* ignore */ });
   }
 
   /* ---------------------------------------------------------- Écran 3 : bilan */
