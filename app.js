@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = 'v1.2.3';
+  const APP_VERSION = 'v1.3.0';
   const APP_ID = 'tables-multiplication';
   const E = window.AppEngine;
   const D = window.APP_DATA;
@@ -98,6 +98,10 @@
   let advanceTimer = null;
   let mascotIdx = 0;
   let committed = true;         // la partie en cours a-t-elle déjà été enregistrée ?
+  let timedOn = false;          // option « Contre la montre » (préférence)
+  let gameTimed = false;        // la partie en cours est-elle chronométrée ?
+  let recordKey = null;         // clé du record de cette partie (null : pas de record, ex. révision)
+  let lastRecordKey = null;     // idem, pour « Recommencer »
 
   // Le séparateur reste « × » : c'est le format des historiques déjà enregistrés.
   const keyOf = (a, b) => `${a}×${b}`;
@@ -122,10 +126,11 @@
       : [];
     selected = saved.length ? [...new Set(saved)] : D.tables.defaults.slice();
     soundOn = typeof p.sound === 'boolean' ? p.sound : true;
+    timedOn = p.timed === true;
     if (!soundOn) E.sound.enable(false);   // enable(true) créerait l'AudioContext avant tout geste
   }
   function savePrefs() {
-    E.store.save('prefs', { tables: selected.slice(), sound: soundOn });
+    E.store.save('prefs', { tables: selected.slice(), sound: soundOn, timed: timedOn });
   }
 
   function loadErrorHistory() {
@@ -188,11 +193,19 @@
     savePrefs();
   });
 
+  const timedToggle = $('#timed-toggle');
+  if (timedToggle) {
+    timedToggle.addEventListener('change', () => {
+      timedOn = timedToggle.checked;
+      savePrefs();
+    });
+  }
+
   $('#reset-progress').addEventListener('click', () => {
     const ok = window.confirm(
-      'Effacer toute la progression ?\n(historique des erreurs et série de jours)');
+      'Effacer toute la progression ?\n(historique des erreurs, série de jours et records)');
     if (!ok) return;
-    ['errors', 'streak', 'daily'].forEach((k) => E.store.remove(k));
+    ['errors', 'streak', 'daily', 'records'].forEach((k) => E.store.remove(k));
     window.location.reload();
   });
 
@@ -212,10 +225,14 @@
     return ops;
   }
 
-  function startGame(ops) {
+  // recordKeyArg : non fourni = partie normale (record par ensemble de tables) ; null = pas de record (révision).
+  function startGame(ops, recordKeyArg) {
     const list = ops && ops.length ? ops : buildOps();
     if (!list.length) return;
     clearTimeout(advanceTimer);
+    recordKey = recordKeyArg !== undefined ? recordKeyArg : (ops && ops.length ? null : tablesKey());
+    lastRecordKey = recordKey;
+    gameTimed = timedOn;
     lastOps = list.map((o) => o.slice());
     queue = shuffle(list);
     errorCounts = {};
@@ -231,6 +248,7 @@
     E.sound.resume();
     E.screens.show('screen-play');
     updateScore();
+    startClock();
     nextQuestion();
   }
 
@@ -280,6 +298,7 @@
     const ok = parseInt(answerStr, 10) === expected;
     const key = keyOf(a, b);
     const elapsed = Date.now() - startedAt;
+    if (clock.active) clock.final = clockMs();   // le temps s'arrête à la dernière réponse
     answered = true;
     submitBtn.disabled = true;
 
@@ -352,6 +371,7 @@
   nextBtn.addEventListener('click', nextQuestion);
   $('#quit-btn').addEventListener('click', () => {
     clearTimeout(advanceTimer);
+    stopClock();
     commitSession();
     E.screens.show('screen-home');
   });
@@ -408,6 +428,87 @@
       .catch(() => { /* ignore */ });
   }
 
+  /* ------------------------------------------------------------ Chronomètre */
+  // « Contre la montre » : on mesure le temps total de la partie (les questions ratées qui
+  // reviennent comptent). Il s'arrête à la dernière réponse et se met en pause quand l'appli
+  // n'est plus à l'écran. Le record est le meilleur temps pour le même ensemble de tables.
+  const timerEl = $('#timer');
+  const clock = { active: false, running: false, acc: 0, since: 0, tick: null, final: 0 };
+  const tablesKey = () => selected.slice().sort((x, y) => x - y).join(',');
+  const clockMs = () => clock.acc + (clock.running ? performance.now() - clock.since : 0);
+  const fmtClock = (ms) => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  function renderTimer() {
+    if (timerEl) timerEl.textContent = `⏱ ${fmtClock(clockMs())}`;
+  }
+  function startClock() {
+    clearInterval(clock.tick);
+    clock.active = gameTimed;
+    clock.running = gameTimed;
+    clock.acc = 0;
+    clock.final = 0;
+    clock.since = performance.now();
+    if (timerEl) timerEl.hidden = !gameTimed;
+    if (gameTimed) {
+      renderTimer();
+      clock.tick = setInterval(renderTimer, 250);
+    }
+  }
+  function stopClock() {           // partie abandonnée ou terminée
+    clearInterval(clock.tick);
+    clock.active = false;
+    clock.running = false;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!clock.active) return;
+    if (document.hidden) {
+      if (clock.running) { clock.acc += performance.now() - clock.since; clock.running = false; }
+    } else if (!clock.running) {
+      clock.since = performance.now();
+      clock.running = true;
+    }
+  });
+
+  // Affiche le temps et le record ; renvoie une phrase pour les lecteurs d'écran (ou '').
+  function renderTimeResult() {
+    const item = $('#time-item');
+    const timed = clock.active;
+    stopClock();
+    if (item) item.hidden = !timed;
+    if (!timed) return '';
+    const ms = clock.final;
+    let note = '';
+    let isNew = false;
+    if (recordKey) {
+      const stored = E.store.load('records', {});
+      const records = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+      const prev = records[recordKey];
+      if (!prev || typeof prev.ms !== 'number') {
+        note = '🏅 Premier temps enregistré !';
+        isNew = true;
+      } else if (Math.floor(ms / 1000) < Math.floor(prev.ms / 1000)) {
+        note = `🏅 Nouveau record ! (avant : ${fmtClock(prev.ms)})`;
+        isNew = true;
+      } else {
+        note = `Record : ${fmtClock(prev.ms)}`;
+      }
+      if (isNew) {
+        records[recordKey] = { ms: Math.round(ms), day: E.history.dayStr(Date.now()) };
+        E.store.save('records', records);
+      }
+    }
+    const t = $('#res-time');
+    if (t) t.textContent = fmtClock(ms);
+    const r = $('#res-record');
+    if (r) {
+      r.textContent = note;
+      r.classList.toggle('is-new', isNew);
+    }
+    return `Temps : ${fmtClock(ms)}.${note ? ' ' + note.replace('🏅 ', '') : ''}`;
+  }
+
   /* ---------------------------------------------------------- Écran 3 : bilan */
   const fmtTime = (ms) => `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
   const barColor = (pct) => (pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)');
@@ -423,6 +524,7 @@
     $('#result-emoji').textContent = tier.emoji;
     $('#result-title').textContent = tier.title;
     $('#result-subtitle').textContent = tier.sub.replace('{rate}', String(rate));
+    const timeText = renderTimeResult();
 
     commitSession();
     E.history.renderWeek({ bars: '#week-bars', block: '#history-week', summary: '#week-summary' });
@@ -432,7 +534,7 @@
 
     E.screens.show('screen-done');
     E.fx.burst(rate >= 80);
-    E.announce(`Partie terminée. ${tier.title} ${correctCount} bonnes réponses, ${wrongCount} erreurs.`);
+    E.announce(`Partie terminée. ${tier.title} ${correctCount} bonnes réponses, ${wrongCount} erreurs.${timeText ? ' ' + timeText : ''}`);
   }
 
   function renderTableSummary() {
@@ -500,10 +602,10 @@
 
   $('#review-btn').addEventListener('click', () => {
     const keys = new Set([...Object.keys(errorCounts), ...slowSet]);
-    startGame([...keys].map(parseKey));
+    startGame([...keys].map(parseKey), null);
   });
   $('#print-btn').addEventListener('click', () => window.print());
-  $('#again-btn').addEventListener('click', () => startGame(lastOps));
+  $('#again-btn').addEventListener('click', () => startGame(lastOps, lastRecordKey));
   $('#home-btn').addEventListener('click', () => E.screens.show('screen-home'));
 
   /* ------------------------------------------------------------ Mises à jour */
@@ -525,6 +627,7 @@
   /* ---------------------------------------------------------------- Démarrage */
   loadPrefs();
   soundToggle.checked = soundOn;
+  if (timedToggle) timedToggle.checked = timedOn;
   renderTableButtons();
   startBtn.addEventListener('click', () => startGame());
   E.screens.show('screen-home', { focus: false });

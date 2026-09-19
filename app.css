@@ -64,6 +64,10 @@
   width: 20px; height: 20px; flex-shrink: 0; cursor: pointer;
   accent-color: var(--yellow); margin-top: 1px;
 }
+.option-toggle .opt-note {
+  display: block; font-weight: 700; color: var(--ink-dim); font-size: 0.76rem; margin-top: 1px;
+}
+
 /* Liens rares, volontairement à l'écart des réglages (évite les faux clics). */
 .home-footer {
   display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
@@ -85,6 +89,7 @@
   font-size: 0.85rem; color: var(--ink-dim); margin-bottom: 6px; gap: 8px;
 }
 .progress-info strong { color: var(--yellow); font-weight: 800; }
+.progress-info .timer { color: var(--blue); font-weight: 800; font-variant-numeric: tabular-nums; }
 .progress-bar {
   width: 100%; height: 10px; background: var(--card); border-radius: 999px; overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
@@ -200,6 +205,8 @@ body.play-active .version-badge { display: none; }
 .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .result-item { background: var(--bg); border-radius: 14px; padding: 14px; }
 .result-item--wide { grid-column: span 2; }
+.result-item .record { min-height: 1.2em; margin-top: 6px; font-size: 0.85rem; font-weight: 800; color: var(--ink-soft); }
+.result-item .record.is-new { color: var(--yellow); }
 .result-item .n { font-size: 2rem; font-weight: 900; }
 .result-item .n.g { color: var(--green); }
 .result-item .n.r { color: var(--red); }

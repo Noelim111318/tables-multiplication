@@ -3,7 +3,7 @@
   "name": "Tables de Multiplication",
   "short_name": "Multiplications",
   "description": "Entraine-toi aux tables de multiplication avec un rapport d'erreurs et un bilan par table.",
-  "version": "v1.2.3",
+  "version": "v1.3.0",
   "lang": "fr",
   "dir": "ltr",
   "start_url": "./index.html",

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Tables de Multiplication</title>
   <meta name="description" content="Entraîne-toi aux tables de multiplication avec un rapport d'erreurs et un bilan par table.">
-  <meta name="app-version" content="v1.2.3">
+  <meta name="app-version" content="v1.3.0">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#1A0A2E">
   <meta name="mobile-web-app-capable" content="yes">
@@ -34,7 +34,7 @@
   </div>
 
   <div class="header">
-    <div class="version-badge" id="app-version">v1.2.3</div>
+    <div class="version-badge" id="app-version">v1.3.0</div>
     <h1>Tables de Multiplication</h1>
     <p>Entraîne-toi et progresse à ton rythme !</p>
     <div class="streak-badge" id="streak-badge" hidden></div>
@@ -55,6 +55,10 @@
         <input type="checkbox" id="sound-toggle">
         <span>🔔 Petits sons quand on répond</span>
       </label>
+      <label class="option-toggle">
+        <input type="checkbox" id="timed-toggle">
+        <span>⏱️ Contre la montre <span class="opt-note">(chronomètre la partie et garde ton meilleur temps)</span></span>
+      </label>
 
     </div>
     <button class="btn btn--primary btn--big" id="start-btn" type="button">🚀 C'est parti !</button>
@@ -72,6 +76,7 @@
     <div class="progress-wrap">
       <div class="progress-info">
         <span>Progression</span>
+        <span class="timer" id="timer" hidden aria-hidden="true">⏱ 0:00</span>
         <strong id="progress-text">0 / 0</strong>
       </div>
       <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
@@ -124,6 +129,7 @@
         <div class="result-item"><div class="n g" id="res-correct">0</div><div class="l">✅ Corrects</div></div>
         <div class="result-item"><div class="n r" id="res-wrong">0</div><div class="l">❌ Erreurs</div></div>
         <div class="result-item result-item--wide"><div class="n" id="res-rate">0%</div><div class="l">🎯 Taux de réussite</div></div>
+        <div class="result-item result-item--wide" id="time-item" hidden><div class="n" id="res-time">0:00</div><div class="l">⏱ Temps</div><div class="record" id="res-record"></div></div>
       </div>
 
       <div class="report-block" id="history-week" hidden>

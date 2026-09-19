@@ -27,6 +27,10 @@ tables d'addition.
   en option, un petit son.
 - **Les erreurs reviennent** : une multiplication ratée est **replacée quelques
   questions plus loin** dans la même partie, jusqu'à ce qu'elle soit sue.
+- **⏱️ Contre la montre** (option) : on chronomètre le temps total de la partie (les questions
+  ratées qui reviennent comptent ; le chrono se met en pause quand l'appli n'est plus à l'écran)
+  et on garde le **meilleur temps** pour chaque ensemble de tables. Le bilan affiche le temps et
+  le record (« Nouveau record ! »). Pas de record pour une partie de révision.
 - **Barre de progression** + score en direct (✅ succès / ❌ erreurs / 🔵 restantes).
 - **Écran de bilan** :
   - emoji + phrase selon le taux de réussite ;
@@ -73,14 +77,15 @@ Clés `localStorage`, préfixées par `tables-multiplication:` :
 
 | Donnée | Clé |
 |---|---|
-| Tables cochées + option « petits sons » | `prefs` |
+| Tables cochées + options « petits sons » et « contre la montre » | `prefs` |
 | Total cumulé d'erreurs par multiplication (`a×b`) | `errors` |
 | Série de jours d'affilée | `streak` |
 | Questions par jour (60 jours, pour le graphique 7 j) | `daily` |
+| Meilleur temps par ensemble de tables (mode « contre la montre ») | `records` |
 | Bandeau « Installer » masqué | `install-hidden` |
 | Version du schéma de stockage | `__schema` |
 
-Le lien **« Réinitialiser la progression »** efface `errors`, `streak` et `daily`
+Le lien **« Réinitialiser la progression »** efface `errors`, `streak`, `daily` et `records`
 (il **garde** les tables cochées et l'option son).
 
 **Reprise des anciennes données.** Avant la v1.2.0, les clés s'appelaient
@@ -187,5 +192,5 @@ différente, remplace directement ces fichiers en gardant les mêmes noms et tai
 ## Idées d'évolution
 
 - Multiplications « à l'envers » (`? × 7 = 63`) ou divisions associées.
-- Mode chronométré / défi.
+- Défi 60 secondes (compte à rebours).
 - Choix du nombre de questions par partie.
